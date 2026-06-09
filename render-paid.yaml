@@ -6,6 +6,12 @@ services:
     envVars:
       - key: SAFEWHEELS_DB
         value: /data/safewheels.sqlite
+      - key: SAFEWHEELS_SEED_DEMO
+        value: "0"
+      - key: SAFEWHEELS_USERNAME
+        sync: false
+      - key: SAFEWHEELS_PASSWORD
+        sync: false
     disk:
       name: safewheels-data
       mountPath: /data

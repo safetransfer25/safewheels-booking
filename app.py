@@ -12,6 +12,9 @@ PUBLIC = ROOT / "public"
 DB_PATH = Path(os.environ.get("SAFEWHEELS_DB", ROOT / "safewheels.sqlite"))
 PORT = int(os.environ.get("PORT", "4173"))
 SESSIONS = set()
+LOGIN_USERNAME = os.environ.get("SAFEWHEELS_USERNAME", "admin")
+LOGIN_PASSWORD = os.environ.get("SAFEWHEELS_PASSWORD", "safewheels")
+SEED_DEMO_DATA = os.environ.get("SAFEWHEELS_SEED_DEMO", "1") == "1"
 
 VEHICLES = {"OPEL VIVARO", "PEUGEOT 5008"}
 DRIVERS = {"Θεόδωρος Τσιάμης", "Γεώργιος Τσιάμης", "Ιωάννης Τσιάμης"}
@@ -83,7 +86,7 @@ def init_db():
         )
 
         total = conn.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"]
-        if total:
+        if total or not SEED_DEMO_DATA:
             return
         today = datetime.now().date().isoformat()
         seed = [
@@ -187,7 +190,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/login":
             data = self.read_json()
-            if data.get("username") == "admin" and data.get("password") == "safewheels":
+            if data.get("username") == LOGIN_USERNAME and data.get("password") == LOGIN_PASSWORD:
                 token = secrets.token_urlsafe(32)
                 SESSIONS.add(token)
                 return self.send_json({"token": token})

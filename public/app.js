@@ -2,6 +2,7 @@ const state = {
   token: localStorage.getItem("safewheelsToken"),
   date: new Date().toISOString().slice(0, 10),
   viewMode: "day",
+  driverFilter: "",
   activeTab: "bookings",
   bookings: [],
   expenses: [],
@@ -51,6 +52,9 @@ function bindEvents() {
   $("#dailyPlanBtn").addEventListener("click", () => setViewMode("day"));
   $("#weeklyPlanBtn").addEventListener("click", () => setViewMode("week"));
   $("#monthlyPlanBtn").addEventListener("click", () => setViewMode("month"));
+  document.querySelectorAll(".driver-tab").forEach((button) => {
+    button.addEventListener("click", () => setDriverFilter(button.dataset.driver || ""));
+  });
   $("#searchInput").addEventListener("input", debounce(loadBookings, 220));
   $("#addBookingBtn").addEventListener("click", () => openBooking());
   $("#closeDialog").addEventListener("click", () => bookingDialog.close());
@@ -148,26 +152,27 @@ async function loadBookings() {
     params.set("end", range.end);
   }
   const totalsParams = new URLSearchParams({ start: range.start, end: range.end });
-  const [bookings, totals] = await Promise.all([
+  const [bookings] = await Promise.all([
     api(`/api/bookings?${params.toString()}`),
     api(`/api/totals?${totalsParams.toString()}`)
   ]);
   state.bookings = bookings;
   renderBookings();
-  renderTotals(totals);
+  renderTotals(calculateTotals(filteredBookings()));
 }
 
 function renderBookings() {
   const list = $("#bookingList");
   const range = currentRange();
-  $("#planTitle").textContent = range.title;
-  $("#planMeta").textContent = `${state.bookings.length} transfer`;
-  if (!state.bookings.length) {
+  const bookings = filteredBookings();
+  $("#planTitle").textContent = state.driverFilter ? `${range.title} · ${state.driverFilter}` : range.title;
+  $("#planMeta").textContent = `${bookings.length} transfer`;
+  if (!bookings.length) {
     list.innerHTML = `<div class="empty">Δεν υπάρχουν κρατήσεις για αυτή την προβολή.</div>`;
     return;
   }
   let lastDate = "";
-  list.innerHTML = state.bookings.map((booking) => {
+  list.innerHTML = bookings.map((booking) => {
     const dateHeader = booking.date !== lastDate && state.viewMode !== "day"
       ? `<div class="date-divider">${formatDate(booking.date)}</div>`
       : "";
@@ -202,6 +207,26 @@ function renderBookings() {
       if (event.key === "Enter") card.click();
     });
   });
+}
+
+function filteredBookings() {
+  if (!state.driverFilter) return state.bookings;
+  return state.bookings.filter((booking) => booking.driver === state.driverFilter);
+}
+
+function calculateTotals(bookings) {
+  return bookings.reduce((totals, booking) => {
+    if (booking.status === "Cancelled") return totals;
+    const price = Number(booking.price || 0);
+    totals.bookings += 1;
+    totals.total += price;
+    if (booking.paymentMethod === "Κάρτα") {
+      totals.card += price;
+    } else {
+      totals.cash += price;
+    }
+    return totals;
+  }, { bookings: 0, cash: 0, card: 0, total: 0 });
 }
 
 function renderTotals(totals) {
@@ -348,6 +373,15 @@ async function deleteExpense() {
   await api(`/api/expenses/${state.editingExpenseId}`, { method: "DELETE" });
   expenseDialog.close();
   loadExpenses();
+}
+
+function setDriverFilter(driver) {
+  state.driverFilter = driver;
+  document.querySelectorAll(".driver-tab").forEach((button) => {
+    button.classList.toggle("active", (button.dataset.driver || "") === driver);
+  });
+  renderBookings();
+  renderTotals(calculateTotals(filteredBookings()));
 }
 
 function setViewMode(mode) {

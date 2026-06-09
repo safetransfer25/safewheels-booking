@@ -103,7 +103,7 @@ button:active { transform: translateY(1px); }
 }
 .topbar h1 { font-size: 24px; }
 
-.controls, .search-row, .summary-strip, .calendar-shell, .tabs, .view-actions {
+.controls, .search-row, .summary-strip, .calendar-shell, .tabs, .view-actions, .driver-tabs {
   max-width: 1120px;
   margin: 0 auto 12px;
 }
@@ -114,6 +114,23 @@ button:active { transform: translateY(1px); }
 }
 .view-actions {
   grid-template-columns: 1fr;
+}
+.driver-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.driver-tab {
+  min-height: 40px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--accent-dark);
+  font-size: 13px;
+}
+.driver-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 .tab, .view-actions .ghost.active {
   background: #d8eeea;
@@ -344,6 +361,7 @@ dialog footer div {
   .search-row { grid-template-columns: 1fr auto; }
   .search-row button { width: auto; }
   .view-actions { grid-template-columns: repeat(3, auto); justify-content: start; }
+  .driver-tabs { grid-template-columns: repeat(4, auto); justify-content: start; }
   .expense-controls { grid-template-columns: 1fr auto; }
   .summary-strip { grid-template-columns: repeat(4, 1fr); }
   .finance-strip { grid-template-columns: repeat(3, 1fr); }
@@ -358,7 +376,7 @@ dialog footer div {
 
 @media print {
   body { background: #fff; }
-  .topbar, .tabs, .controls, .view-actions, .search-row, .summary-strip, #addBookingBtn, #logoutBtn, dialog { display: none !important; }
+  .topbar, .tabs, .controls, .view-actions, .driver-tabs, .search-row, .summary-strip, #addBookingBtn, #logoutBtn, dialog { display: none !important; }
   .app { padding: 0; }
   .calendar-shell { border: 0; }
   .day-heading button { display: none; }
