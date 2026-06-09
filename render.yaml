@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: safewheels-booking
+    runtime: docker
+    plan: free
+    envVars:
+      - key: SAFEWHEELS_DB
+        value: /data/safewheels.sqlite

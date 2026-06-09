@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: safewheels-booking
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: SAFEWHEELS_DB
+        value: /data/safewheels.sqlite
+    disk:
+      name: safewheels-data
+      mountPath: /data
+      sizeGB: 1
