@@ -28,7 +28,7 @@ button, input, select, textarea {
 }
 
 button {
-  min-height: 44px;
+  min-height: 40px;
   border: 0;
   border-radius: 8px;
   background: var(--accent);
@@ -48,7 +48,7 @@ button:active { transform: translateY(1px); }
   color: #b91c1c;
 }
 .icon-btn {
-  width: 44px;
+  width: 42px;
   padding: 0;
   font-size: 24px;
   line-height: 1;
@@ -160,19 +160,19 @@ button:active { transform: translateY(1px); }
 
 label {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 input, select, textarea {
   width: 100%;
-  min-height: 44px;
+  min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
-  padding: 10px 12px;
+  padding: 8px 11px;
   outline-color: var(--accent);
 }
 textarea { resize: vertical; }
@@ -315,7 +315,7 @@ textarea { resize: vertical; }
 
 dialog {
   width: min(760px, calc(100% - 18px));
-  max-height: calc(100dvh - 18px);
+  max-height: calc(100dvh - 8px);
   border: 0;
   border-radius: 8px;
   padding: 0;
@@ -323,22 +323,25 @@ dialog {
 }
 dialog::backdrop { background: rgba(15, 23, 42, .48); }
 .booking-form {
-  padding: 14px;
+  padding: 8px;
 }
 .booking-form header {
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 .booking-form h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-  max-height: 64dvh;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 80dvh;
   overflow: auto;
   padding-right: 2px;
+}
+.wide {
+  grid-column: 1 / -1;
 }
 .form-error {
   min-height: 18px;
@@ -347,7 +350,7 @@ dialog::backdrop { background: rgba(15, 23, 42, .48); }
   font-weight: 700;
 }
 dialog footer {
-  margin-top: 12px;
+  margin-top: 6px;
   align-items: stretch;
 }
 dialog footer div {
@@ -366,7 +369,6 @@ dialog footer div {
   .summary-strip { grid-template-columns: repeat(4, 1fr); }
   .finance-strip { grid-template-columns: repeat(3, 1fr); }
   .form-grid { grid-template-columns: repeat(2, 1fr); }
-  .wide { grid-column: 1 / -1; }
   .booking-main { grid-template-columns: auto 1fr auto; }
   .booking-card {
     grid-template-columns: 1fr auto;

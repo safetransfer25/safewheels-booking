@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0f766e">
     <title>SafeWheels Kos | Κρατήσεις Transfer</title>
-    <link rel="stylesheet" href="/styles.css?v=3">
+    <link rel="stylesheet" href="/styles.css?v=5">
   </head>
   <body>
     <main id="loginScreen" class="login-screen">
@@ -59,7 +59,7 @@
         </section>
 
         <section class="search-row">
-          <input id="searchInput" type="search" placeholder="Αναζήτηση πελάτη, τηλεφώνου, ξενοδοχείου, ημερομηνίας">
+          <input id="searchInput" type="search" placeholder="Αναζήτηση πελάτη, τηλεφώνου ή ημερομηνίας">
           <button id="addBookingBtn">Νέα κράτηση</button>
         </section>
 
@@ -116,21 +116,19 @@
         <input type="hidden" name="id">
         <div class="form-grid">
           <label>Ημερομηνία<input name="date" type="date" required></label>
-          <label>Ώρα παραλαβής<input name="pickupTime" type="time" required></label>
-          <label>Ώρα πτήσης/ferry<input name="travelTime" type="time"></label>
+          <label>Ώρα παραλαβής<input name="pickupTime" type="text" inputmode="numeric" placeholder="14:30" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" required></label>
+          <label>Ώρα πτήσης/ferry<input name="travelTime" type="text" inputmode="numeric" placeholder="16:05" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"></label>
           <label>Όνομα πελάτη<input name="customerName" required></label>
           <label>Τηλέφωνο / WhatsApp<input name="phone" inputmode="tel"></label>
-          <label>Ξενοδοχείο<input name="hotel"></label>
-          <label class="wide">Διαδρομή<input name="route" placeholder="Αεροδρόμιο Κω -> Ξενοδοχείο"></label>
+          <label class="wide">Διαδρομή<input name="route" placeholder="Αεροδρόμιο Κω -> Πελάτης"></label>
           <label>Άτομα<input name="passengers" type="number" min="1" value="1"></label>
-          <label>Αποσκευές<input name="luggage" type="number" min="0" value="0"></label>
           <label>Τιμή (€)<input name="price" type="number" min="0" step="0.01" value="0"></label>
           <label>Κατάσταση πληρωμής<select name="paymentStatus"><option value="Unpaid">Απλήρωτο</option><option value="Paid">Πληρωμένο</option></select></label>
           <label>Τρόπος Πληρωμής<select name="paymentMethod"><option>Μετρητά</option><option>Κάρτα</option></select></label>
           <label>Όχημα<select name="vehicle"><option>OPEL VIVARO</option><option>PEUGEOT 5008</option></select></label>
           <label>Οδηγός<select name="driver"><option value="">Χωρίς οδηγό</option><option>Θεόδωρος Τσιάμης</option><option>Γεώργιος Τσιάμης</option><option>Ιωάννης Τσιάμης</option></select></label>
           <label>Κατάσταση<select name="status"><option value="Pending">Σε αναμονή</option><option value="Confirmed">Επιβεβαιωμένη</option><option value="Completed">Ολοκληρωμένη</option><option value="Cancelled">Ακυρωμένη</option></select></label>
-          <label class="wide">Σημειώσεις<textarea name="notes" rows="3"></textarea></label>
+          <label class="wide">Σημειώσεις<textarea name="notes" rows="2"></textarea></label>
         </div>
         <p id="formError" class="form-error" role="alert"></p>
         <footer>
@@ -169,6 +167,6 @@
       </form>
     </dialog>
 
-    <script src="/app.js?v=4"></script>
+    <script src="/app.js?v=5"></script>
   </body>
 </html>

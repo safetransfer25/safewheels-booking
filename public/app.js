@@ -186,8 +186,8 @@ function renderBookings() {
             <h3>${escapeHtml(booking.customerName)}</h3>
             <div class="booking-details">
               <span>${escapeHtml(booking.route || "Χωρίς διαδρομή")}</span>
-              <span>${escapeHtml(booking.hotel || "Χωρίς ξενοδοχείο")} · ${escapeHtml(booking.phone || "Χωρίς τηλέφωνο")}</span>
-              <span>${booking.passengers} άτομα · ${booking.luggage} αποσκευές · ${escapeHtml(booking.vehicle)}</span>
+              <span>${escapeHtml(booking.phone || "Χωρίς τηλέφωνο")}</span>
+              <span>${booking.passengers} άτομα · ${escapeHtml(booking.vehicle)}</span>
               <span>Πτήση/Ferry: ${escapeHtml(booking.travelTime || "-")} · Οδηγός: ${escapeHtml(booking.driver || "-")}</span>
             </div>
           </div>
@@ -245,7 +245,6 @@ function openBooking(booking = null) {
   const values = booking || {
     date: state.date,
     passengers: 1,
-    luggage: 0,
     price: 0,
     paymentStatus: "Unpaid",
     paymentMethod: "Μετρητά",
