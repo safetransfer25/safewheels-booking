@@ -62,6 +62,7 @@ function bindEvents() {
   $("#deleteBtn").addEventListener("click", deleteBooking);
   $("#printBtn").addEventListener("click", () => window.print());
   bookingForm.addEventListener("submit", saveBooking);
+  bookingForm.querySelectorAll(".time-entry").forEach((input) => bindTimeEntry(input));
 
   expenseMonth.addEventListener("change", loadExpenses);
   $("#addExpenseBtn").addEventListener("click", () => openExpense());
@@ -236,6 +237,32 @@ function renderTotals(totals) {
   $("#grandTotal").textContent = money(totals.total);
 }
 
+function bindTimeEntry(input) {
+  input.addEventListener("input", () => {
+    input.value = formatTimeInput(input.value, false);
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  input.addEventListener("blur", () => {
+    input.value = formatTimeInput(input.value, true);
+  });
+}
+
+function formatTimeInput(value, complete) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 4);
+  if (!digits) return "";
+  if (digits.length === 1) return digits;
+  const hour = Math.min(Number(digits.slice(0, 2)), 23).toString().padStart(2, "0");
+  if (digits.length === 2) return complete ? `${hour}:00` : `${hour}:`;
+  const minuteDigits = digits.slice(2, 4);
+  const minute = complete && minuteDigits.length === 1
+    ? `${minuteDigits}0`
+    : minuteDigits;
+  if (minute.length === 2) {
+    return `${hour}:${Math.min(Number(minute), 59).toString().padStart(2, "0")}`;
+  }
+  return `${hour}:${minute}`;
+}
+
 function openBooking(booking = null) {
   state.editingId = booking?.id || null;
   bookingForm.reset();
@@ -261,6 +288,8 @@ function openBooking(booking = null) {
 async function saveBooking(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(bookingForm));
+  data.pickupTime = formatTimeInput(data.pickupTime, true);
+  data.travelTime = formatTimeInput(data.travelTime, true);
   const id = data.id || state.editingId;
   try {
     await api(id ? `/api/bookings/${id}` : "/api/bookings", {

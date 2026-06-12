@@ -116,8 +116,8 @@
         <input type="hidden" name="id">
         <div class="form-grid">
           <label>Ημερομηνία<input name="date" type="date" required></label>
-          <label>Ώρα παραλαβής<input name="pickupTime" type="text" inputmode="numeric" placeholder="14:30" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" required></label>
-          <label>Ώρα πτήσης/ferry<input name="travelTime" type="text" inputmode="numeric" placeholder="16:05" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"></label>
+          <label>Ώρα παραλαβής<input name="pickupTime" class="time-entry" type="text" inputmode="numeric" placeholder="1730 -> 17:30" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" required></label>
+          <label>Ώρα πτήσης/ferry<input name="travelTime" class="time-entry" type="text" inputmode="numeric" placeholder="1605 -> 16:05" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"></label>
           <label>Όνομα πελάτη<input name="customerName" required></label>
           <label>Τηλέφωνο / WhatsApp<input name="phone" inputmode="tel"></label>
           <label class="wide">Διαδρομή<input name="route" placeholder="Αεροδρόμιο Κω -> Πελάτης"></label>
@@ -167,6 +167,6 @@
       </form>
     </dialog>
 
-    <script src="/app.js?v=5"></script>
+    <script src="/app.js?v=6"></script>
   </body>
 </html>
