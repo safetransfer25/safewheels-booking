@@ -7,6 +7,11 @@
   --panel: #ffffff;
   --accent: #0f766e;
   --accent-dark: #115e59;
+  --cash: #1d4ed8;
+  --card: #ca8a04;
+  --expense: #b91c1c;
+  --total: #111827;
+  --net: #1e40af;
   --pending: #f59e0b;
   --confirmed: #0ea5e9;
   --completed: #16a34a;
@@ -16,6 +21,18 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+#printArea { display: none; }
+body.printing-revenue #printArea {
+  display: block;
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 190mm;
+  background: #fff;
+}
+body.printing-revenue.print-landscape #printArea {
+  width: 277mm;
+}
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -433,11 +450,19 @@ textarea { resize: vertical; }
   border-radius: 8px;
   overflow: hidden;
 }
+.month-4 { background: #eff8ff; }
+.month-5 { background: #effbf5; }
+.month-6 { background: #f4f8fb; }
+.month-7 { background: #fff9ed; }
+.month-8 { background: #fffbeb; }
+.month-9 { background: #eefcf9; }
+.month-10 { background: #fff3e8; }
+.month-11 { background: #f6f7f9; }
 .month-card-header {
   display: grid;
   gap: 10px;
   padding: 14px;
-  background: #f8fbfb;
+  background: rgba(255, 255, 255, .72);
   border-bottom: 1px solid var(--line);
 }
 .month-card-header h3 {
@@ -447,6 +472,12 @@ textarea { resize: vertical; }
 .month-card-header p {
   margin: 2px 0 0;
   color: var(--muted);
+}
+.month-print-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 .month-totals {
   display: grid;
@@ -467,6 +498,11 @@ textarea { resize: vertical; }
   color: var(--ink);
   font-size: 15px;
 }
+.amount-cash { color: var(--cash) !important; }
+.amount-card { color: var(--card) !important; }
+.amount-expense { color: var(--expense) !important; }
+.amount-total { color: var(--total) !important; }
+.amount-net { color: var(--net) !important; }
 .revenue-table-wrap {
   overflow-x: auto;
 }
@@ -488,6 +524,11 @@ textarea { resize: vertical; }
   background: #e8f1f0;
   color: var(--accent-dark);
   font-weight: 850;
+}
+.revenue-table tfoot th {
+  border-top: 3px solid var(--accent-dark);
+  font-size: 14px;
+  font-weight: 900;
 }
 .revenue-table td:nth-child(5),
 .revenue-table td:nth-child(6),
@@ -588,4 +629,87 @@ dialog footer div {
   .calendar-shell { border: 0; }
   .day-heading button { display: none; }
   .booking-card { break-inside: avoid; }
+  body.printing-revenue > *:not(#printArea) { display: none !important; }
+  body.printing-revenue #printArea {
+    display: block !important;
+    position: static;
+    left: auto;
+    top: auto;
+    width: 190mm;
+    margin: 0 auto;
+  }
+  body.printing-revenue.print-landscape #printArea {
+    width: 277mm;
+  }
+  .print-sheet {
+    background: #fff;
+    border: 1px solid #d8e0e8;
+    border-radius: 8px;
+    padding: 10mm;
+    break-inside: avoid;
+  }
+  .print-header {
+    margin-bottom: 10px;
+    border-bottom: 2px solid var(--accent-dark);
+    padding-bottom: 8px;
+  }
+  .print-header p {
+    margin: 0;
+    color: var(--accent-dark);
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0;
+  }
+  .print-header h1 {
+    margin: 2px 0;
+    color: var(--ink);
+    font-size: 22px;
+  }
+  .print-header h2 {
+    margin: 0;
+    color: var(--muted);
+    font-size: 16px;
+  }
+  .print-revenue-table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 10.5px;
+  }
+  .print-revenue-table th,
+  .print-revenue-table td {
+    padding: 5px 6px;
+    overflow-wrap: anywhere;
+  }
+  .print-revenue-table th:nth-child(1) { width: 12%; }
+  .print-revenue-table th:nth-child(2) { width: 8%; }
+  .print-revenue-table th:nth-child(3) { width: 20%; }
+  .print-revenue-table th:nth-child(4) { width: 16%; }
+  .print-revenue-table th:nth-child(5),
+  .print-revenue-table th:nth-child(6),
+  .print-revenue-table th:nth-child(7) { width: 10%; }
+  .print-revenue-table th:nth-child(8) { width: 14%; }
+  .print-totals {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-top: 12px;
+    border-top: 3px solid var(--accent-dark);
+    padding-top: 8px;
+  }
+  .print-totals div {
+    display: grid;
+    gap: 2px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    padding: 6px;
+  }
+  .print-totals span {
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .print-totals strong {
+    font-size: 13px;
+    font-weight: 900;
+  }
 }

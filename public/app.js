@@ -563,19 +563,23 @@ function renderMonthlyRevenue() {
   $("#seasonNet").classList.toggle("negative", Number(data.season.net) < 0);
   $("#revenueMeta").textContent = `Απρίλιος - Νοέμβριος ${data.year}`;
 
-  $("#revenueMonthList").innerHTML = data.months.map((month) => `
-    <article class="month-card">
+  $("#revenueMonthList").innerHTML = data.months.map((month, index) => `
+    <article class="month-card month-${month.month}">
       <header class="month-card-header">
         <div>
           <h3>${escapeHtml(month.name)} ${data.year}</h3>
           <p>${month.entries.length} γραμμές</p>
+          <div class="month-print-actions">
+            <button type="button" class="small-btn print-month-btn" data-index="${index}">Εκτύπωση ${escapeHtml(month.name)}</button>
+            <button type="button" class="small-btn ghost pdf-month-btn" data-index="${index}">Εξαγωγή PDF</button>
+          </div>
         </div>
         <div class="month-totals">
-          <span>Μετρητά <strong>${money(month.cash)}</strong></span>
-          <span>Κάρτα <strong>${money(month.card)}</strong></span>
-          <span>Γενικό <strong>${money(month.total)}</strong></span>
-          <span>Έξοδα <strong>${money(month.expenses)}</strong></span>
-          <span>Καθαρά <strong class="${Number(month.net) < 0 ? "negative" : ""}">${money(month.net)}</strong></span>
+          <span>Μετρητά <strong class="amount-cash">${money(month.cash)}</strong></span>
+          <span>Κάρτα <strong class="amount-card">${money(month.card)}</strong></span>
+          <span>Γενικό <strong class="amount-total">${money(month.total)}</strong></span>
+          <span>Έξοδα <strong class="amount-expense">${money(month.expenses)}</strong></span>
+          <span>Καθαρά <strong class="amount-net ${Number(month.net) < 0 ? "negative" : ""}">${money(month.net)}</strong></span>
         </div>
       </header>
       <div class="revenue-table-wrap">
@@ -599,9 +603,9 @@ function renderMonthlyRevenue() {
                 <td>${escapeHtml(entry.time || "-")}</td>
                 <td>${escapeHtml(entry.route || "-")}</td>
                 <td>${escapeHtml(entry.customer || "-")}</td>
-                <td>${entry.cash ? money(entry.cash) : ""}</td>
-                <td>${entry.card ? money(entry.card) : ""}</td>
-                <td>${entry.expenses ? money(entry.expenses) : ""}</td>
+                <td class="amount-cash">${entry.cash ? money(entry.cash) : ""}</td>
+                <td class="amount-card">${entry.card ? money(entry.card) : ""}</td>
+                <td class="amount-expense">${entry.expenses ? money(entry.expenses) : ""}</td>
                 <td>${escapeHtml(entry.description || "")}</td>
               </tr>
             `).join("") : `<tr><td colspan="8" class="empty-cell">Δεν υπάρχουν καταχωρήσεις για τον μήνα.</td></tr>`}
@@ -609,16 +613,117 @@ function renderMonthlyRevenue() {
           <tfoot>
             <tr>
               <th colspan="4">Σύνολα</th>
-              <th>${money(month.cash)}</th>
-              <th>${money(month.card)}</th>
-              <th>${money(month.expenses)}</th>
-              <th>Καθαρά Έσοδα: ${money(month.net)}</th>
+              <th class="amount-cash">${money(month.cash)}</th>
+              <th class="amount-card">${money(month.card)}</th>
+              <th class="amount-expense">${money(month.expenses)}</th>
+              <th><span class="amount-total">Γενικό: ${money(month.total)}</span><br><span class="amount-net">Καθαρά: ${money(month.net)}</span></th>
             </tr>
           </tfoot>
         </table>
       </div>
     </article>
   `).join("");
+  $("#revenueMonthList").querySelectorAll(".print-month-btn").forEach((button) => {
+    button.addEventListener("click", () => printRevenueMonth(Number(button.dataset.index), "print"));
+  });
+  $("#revenueMonthList").querySelectorAll(".pdf-month-btn").forEach((button) => {
+    button.addEventListener("click", () => printRevenueMonth(Number(button.dataset.index), "pdf"));
+  });
+}
+
+function printRevenueMonth(index, mode) {
+  const data = state.monthlyRevenue;
+  const month = data?.months?.[index];
+  if (!month) return;
+  const printArea = $("#printArea");
+  const title = `TRANSFER - Σύνολο Εσόδων Μήνα - ${month.name} ${data.year}`;
+  printArea.innerHTML = buildRevenuePrintHtml(month, data.year);
+  document.title = title;
+  document.body.classList.add("printing-revenue");
+  document.body.classList.remove("print-landscape");
+  setPrintPageMode("portrait");
+
+  requestAnimationFrame(() => {
+    const table = printArea.querySelector(".print-revenue-table");
+    const needsLandscape = table && table.scrollWidth > printArea.clientWidth + 4;
+    if (needsLandscape) {
+      document.body.classList.add("print-landscape");
+      setPrintPageMode("landscape");
+    }
+    window.print();
+    window.setTimeout(() => {
+      document.body.classList.remove("printing-revenue", "print-landscape");
+      printArea.innerHTML = "";
+      document.title = "SafeWheels Kos | Κρατήσεις Transfer";
+      setPrintPageMode("portrait");
+    }, 500);
+  });
+}
+
+function setPrintPageMode(mode) {
+  let style = document.querySelector("#dynamicPrintPage");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "dynamicPrintPage";
+    document.head.appendChild(style);
+  }
+  style.textContent = `@page { size: A4 ${mode}; margin: 10mm; }`;
+}
+
+function buildRevenuePrintHtml(month, year) {
+  return `
+    <section class="print-sheet month-${month.month}">
+      <header class="print-header">
+        <p>TRANSFER</p>
+        <h1>Σύνολο Εσόδων Μήνα</h1>
+        <h2>${escapeHtml(month.name)} ${year}</h2>
+      </header>
+      <table class="revenue-table print-revenue-table">
+        <thead>
+          <tr>
+            <th>Ημερομηνία</th>
+            <th>Ώρα</th>
+            <th>Δρομολόγιο</th>
+            <th>Πελάτης</th>
+            <th>Μετρητά</th>
+            <th>Κάρτα</th>
+            <th>Έξοδα</th>
+            <th>Περιγραφή</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${month.entries.length ? month.entries.map((entry) => `
+            <tr class="${entry.type === "expense" ? "expense-row" : ""}">
+              <td>${shortDate(entry.date)}</td>
+              <td>${escapeHtml(entry.time || "-")}</td>
+              <td>${escapeHtml(entry.route || "-")}</td>
+              <td>${escapeHtml(entry.customer || "-")}</td>
+              <td class="amount-cash">${entry.cash ? money(entry.cash) : ""}</td>
+              <td class="amount-card">${entry.card ? money(entry.card) : ""}</td>
+              <td class="amount-expense">${entry.expenses ? money(entry.expenses) : ""}</td>
+              <td>${escapeHtml(entry.description || "")}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="8" class="empty-cell">Δεν υπάρχουν καταχωρήσεις για τον μήνα.</td></tr>`}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th colspan="4">Σύνολα</th>
+            <th class="amount-cash">${money(month.cash)}</th>
+            <th class="amount-card">${money(month.card)}</th>
+            <th class="amount-expense">${money(month.expenses)}</th>
+            <th><span class="amount-total">Γενικό: ${money(month.total)}</span><br><span class="amount-net">Καθαρά: ${money(month.net)}</span></th>
+          </tr>
+        </tfoot>
+      </table>
+      <footer class="print-totals">
+        <div><span>Σύνολο Μετρητών</span><strong class="amount-cash">${money(month.cash)}</strong></div>
+        <div><span>Σύνολο Κάρτας</span><strong class="amount-card">${money(month.card)}</strong></div>
+        <div><span>Γενικό Σύνολο</span><strong class="amount-total">${money(month.total)}</strong></div>
+        <div><span>Σύνολο Εξόδων</span><strong class="amount-expense">${money(month.expenses)}</strong></div>
+        <div><span>Καθαρά Έσοδα</span><strong class="amount-net">${money(month.net)}</strong></div>
+      </footer>
+    </section>
+  `;
 }
 
 function setDriverFilter(driver) {

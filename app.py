@@ -14,7 +14,7 @@ DB_PATH = Path(os.environ.get("SAFEWHEELS_DB", ROOT / "safewheels.sqlite"))
 PORT = int(os.environ.get("PORT", "4173"))
 SESSIONS = set()
 LOGIN_USERNAME = os.environ.get("SAFEWHEELS_USERNAME", "admin")
-LOGIN_PASSWORD = os.environ.get("SAFEWHEELS_PASSWORD", "safewheels")
+LOGIN_PASSWORD = os.environ.get("SAFEWHEELS_PASSWORD", "Safe2026&&&")
 SEED_DEMO_DATA = os.environ.get("SAFEWHEELS_SEED_DEMO", "1") == "1"
 APP_TZ = ZoneInfo(os.environ.get("SAFEWHEELS_TZ", "Europe/Athens"))
 SEASON_MONTHS = [
