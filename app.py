@@ -17,6 +17,16 @@ LOGIN_USERNAME = os.environ.get("SAFEWHEELS_USERNAME", "admin")
 LOGIN_PASSWORD = os.environ.get("SAFEWHEELS_PASSWORD", "safewheels")
 SEED_DEMO_DATA = os.environ.get("SAFEWHEELS_SEED_DEMO", "1") == "1"
 APP_TZ = ZoneInfo(os.environ.get("SAFEWHEELS_TZ", "Europe/Athens"))
+SEASON_MONTHS = [
+    (4, "Απρίλιος"),
+    (5, "Μάιος"),
+    (6, "Ιούνιος"),
+    (7, "Ιούλιος"),
+    (8, "Αύγουστος"),
+    (9, "Σεπτέμβριος"),
+    (10, "Οκτώβριος"),
+    (11, "Νοέμβριος"),
+]
 
 VEHICLES = {"OPEL VIVARO", "PEUGEOT 5008"}
 DRIVERS = {"Θεόδωρος Τσιάμης", "Γεώργιος Τσιάμης", "Ιωάννης Τσιάμης"}
@@ -243,6 +253,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.list_expenses(parsed)
         if parsed.path == "/api/expense-summary":
             return self.expense_summary(parsed)
+        if parsed.path == "/api/monthly-revenue":
+            return self.monthly_revenue(parsed)
         if parsed.path.startswith("/api/"):
             return self.send_error(404)
         return super().do_GET()
@@ -419,6 +431,99 @@ class Handler(SimpleHTTPRequestHandler):
             "net": revenue - expenses,
             "byCategory": [row_to_dict(row) for row in by_category],
         })
+
+    def monthly_revenue(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        query = parse_qs(parsed.query)
+        try:
+            year = int(query.get("year", [datetime.now(APP_TZ).year])[0])
+        except ValueError:
+            year = datetime.now(APP_TZ).year
+
+        months = []
+        season = {"cash": 0, "card": 0, "total": 0, "expenses": 0, "net": 0}
+        with db() as conn:
+            auto_complete_transfers(conn)
+            for month_num, month_name in SEASON_MONTHS:
+                start = date(year, month_num, 1)
+                next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+                end = next_month - timedelta(days=1)
+                start_iso = start.isoformat()
+                end_iso = end.isoformat()
+
+                bookings = conn.execute(
+                    """
+                    SELECT date, pickupTime, route, customerName, price, paymentMethod
+                    FROM bookings
+                    WHERE date BETWEEN ? AND ? AND status != 'Cancelled'
+                    ORDER BY date ASC, pickupTime ASC
+                    """,
+                    (start_iso, end_iso),
+                ).fetchall()
+                expenses = conn.execute(
+                    """
+                    SELECT date, description, category, amount
+                    FROM expenses
+                    WHERE date BETWEEN ? AND ?
+                    ORDER BY date ASC, id ASC
+                    """,
+                    (start_iso, end_iso),
+                ).fetchall()
+
+                entries = []
+                cash_total = 0
+                card_total = 0
+                expense_total = 0
+                for booking in bookings:
+                    price = float(booking["price"] or 0)
+                    is_card = booking["paymentMethod"] == "Κάρτα"
+                    if is_card:
+                        card_total += price
+                    else:
+                        cash_total += price
+                    entries.append({
+                        "type": "booking",
+                        "date": booking["date"],
+                        "time": booking["pickupTime"],
+                        "route": booking["route"] or "",
+                        "customer": booking["customerName"] or "",
+                        "cash": 0 if is_card else price,
+                        "card": price if is_card else 0,
+                        "expenses": 0,
+                        "description": "",
+                    })
+                for expense in expenses:
+                    amount = float(expense["amount"] or 0)
+                    expense_total += amount
+                    entries.append({
+                        "type": "expense",
+                        "date": expense["date"],
+                        "time": "",
+                        "route": "",
+                        "customer": "",
+                        "cash": 0,
+                        "card": 0,
+                        "expenses": amount,
+                        "description": expense["description"] or expense["category"] or "",
+                    })
+                entries.sort(key=lambda item: (item["date"], item["time"] or "99:99", item["type"]))
+                total = cash_total + card_total
+                net = total - expense_total
+                month_data = {
+                    "month": month_num,
+                    "name": month_name,
+                    "cash": cash_total,
+                    "card": card_total,
+                    "total": total,
+                    "expenses": expense_total,
+                    "net": net,
+                    "entries": entries,
+                }
+                months.append(month_data)
+                for key in season:
+                    season[key] += month_data[key]
+        return self.send_json({"year": year, "months": months, "season": season})
 
     def delete_row(self, table, parsed):
         if not self.authorized():

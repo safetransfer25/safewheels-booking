@@ -103,7 +103,7 @@ button:active { transform: translateY(1px); }
 }
 .topbar h1 { font-size: 24px; }
 
-.controls, .search-row, .summary-strip, .calendar-shell, .tabs, .view-actions, .driver-tabs {
+.controls, .search-row, .summary-strip, .calendar-shell, .tabs, .view-actions, .driver-tabs, .revenue-month-list {
   max-width: 1120px;
   margin: 0 auto 12px;
 }
@@ -330,7 +330,11 @@ textarea { resize: vertical; }
   display: grid;
   grid-template-columns: 82px 1fr;
   gap: 10px;
-  align-items: center;
+  align-items: start;
+}
+.previous-main h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
 }
 .previous-date {
   display: grid;
@@ -345,6 +349,31 @@ textarea { resize: vertical; }
   display: grid;
   gap: 2px;
   color: var(--ink);
+}
+.previous-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.previous-grid b {
+  color: var(--ink);
+}
+.wide-info {
+  grid-column: 1 / -1;
+}
+.previous-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.small-btn {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 .completed-pill {
   width: fit-content;
@@ -387,6 +416,92 @@ textarea { resize: vertical; }
 }
 .negative {
   color: #b91c1c;
+}
+.revenue-controls {
+  grid-template-columns: 1fr auto;
+}
+.revenue-summary-strip {
+  grid-template-columns: repeat(2, 1fr);
+}
+.revenue-month-list {
+  display: grid;
+  gap: 12px;
+}
+.month-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.month-card-header {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  background: #f8fbfb;
+  border-bottom: 1px solid var(--line);
+}
+.month-card-header h3 {
+  margin: 0;
+  font-size: 20px;
+}
+.month-card-header p {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+.month-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.month-totals span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.month-totals strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+.revenue-table-wrap {
+  overflow-x: auto;
+}
+.revenue-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+  font-size: 13px;
+}
+.revenue-table th,
+.revenue-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 9px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.revenue-table thead th,
+.revenue-table tfoot th {
+  background: #e8f1f0;
+  color: var(--accent-dark);
+  font-weight: 850;
+}
+.revenue-table td:nth-child(5),
+.revenue-table td:nth-child(6),
+.revenue-table td:nth-child(7),
+.revenue-table tfoot th:nth-child(n+2) {
+  text-align: right;
+  white-space: nowrap;
+}
+.expense-row {
+  background: #fff7ed;
+}
+.empty-cell {
+  color: var(--muted);
+  text-align: center !important;
 }
 .empty {
   background: var(--panel);
@@ -443,13 +558,14 @@ dialog footer div {
 @media (min-width: 700px) {
   .app { padding-left: 24px; padding-right: 24px; }
   .topbar h1 { font-size: 32px; }
-  .tabs { grid-template-columns: 1fr 1fr 1.55fr; }
+  .tabs { grid-template-columns: 1fr 1fr 1.55fr 1.35fr; }
   .search-row { grid-template-columns: 1fr auto; }
   .search-row button { width: auto; }
   .view-actions { grid-template-columns: repeat(3, auto); justify-content: start; }
   .driver-tabs { grid-template-columns: repeat(4, auto); justify-content: start; }
   .expense-controls { grid-template-columns: 1fr auto; }
   .summary-strip { grid-template-columns: repeat(4, 1fr); }
+  .revenue-summary-strip { grid-template-columns: repeat(5, 1fr); }
   .finance-strip { grid-template-columns: repeat(3, 1fr); }
   .form-grid { grid-template-columns: repeat(2, 1fr); }
   .booking-main { grid-template-columns: auto 1fr auto; }
@@ -458,8 +574,11 @@ dialog footer div {
     align-items: center;
   }
   .previous-main {
-    grid-template-columns: 100px 1fr 110px auto;
+    grid-template-columns: 100px 1fr 120px 150px;
   }
+  .previous-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .month-card-header { grid-template-columns: 1fr 2fr; align-items: start; }
+  .month-totals { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
 @media print {

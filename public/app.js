@@ -6,6 +6,7 @@ const state = {
   activeTab: "bookings",
   bookings: [],
   previousBookings: [],
+  monthlyRevenue: null,
   expenses: [],
   editingId: null,
   editingExpenseId: null
@@ -20,6 +21,7 @@ const expenseDialog = $("#expenseDialog");
 const expenseForm = $("#expenseForm");
 const selectedDate = $("#selectedDate");
 const expenseMonth = $("#expenseMonth");
+const revenueYear = $("#revenueYear");
 
 const statusLabels = {
   Pending: "Σε αναμονή",
@@ -37,6 +39,7 @@ init();
 function init() {
   selectedDate.value = state.date;
   expenseMonth.value = state.date.slice(0, 7);
+  revenueYear.value = new Date(`${state.date}T12:00:00`).getFullYear();
   bindEvents();
   if (state.token) showApp();
 }
@@ -47,6 +50,7 @@ function bindEvents() {
   $("#bookingsTab").addEventListener("click", () => switchTab("bookings"));
   $("#expensesTab").addEventListener("click", () => switchTab("expenses"));
   $("#previousTab").addEventListener("click", () => switchTab("previous"));
+  $("#revenueTab").addEventListener("click", () => switchTab("revenue"));
   $("#prevDay").addEventListener("click", () => changeDay(-1));
   $("#nextDay").addEventListener("click", () => changeDay(1));
   $("#todayBtn").addEventListener("click", () => setDate(new Date().toISOString().slice(0, 10)));
@@ -64,6 +68,8 @@ function bindEvents() {
   $("#deleteBtn").addEventListener("click", deleteBooking);
   $("#printBtn").addEventListener("click", () => window.print());
   $("#refreshPreviousBtn").addEventListener("click", loadPreviousBookings);
+  $("#refreshRevenueBtn").addEventListener("click", loadMonthlyRevenue);
+  revenueYear.addEventListener("change", loadMonthlyRevenue);
   bookingForm.addEventListener("submit", saveBooking);
   bookingForm.querySelectorAll(".time-entry").forEach((input) => bindTimeEntry(input));
 
@@ -114,6 +120,7 @@ function showApp() {
   loadBookings();
   loadExpenses();
   loadPreviousBookings();
+  loadMonthlyRevenue();
 }
 
 function switchTab(tab) {
@@ -121,11 +128,14 @@ function switchTab(tab) {
   $("#bookingsView").hidden = tab !== "bookings";
   $("#expensesView").hidden = tab !== "expenses";
   $("#previousView").hidden = tab !== "previous";
+  $("#revenueView").hidden = tab !== "revenue";
   $("#bookingsTab").classList.toggle("active", tab === "bookings");
   $("#expensesTab").classList.toggle("active", tab === "expenses");
   $("#previousTab").classList.toggle("active", tab === "previous");
+  $("#revenueTab").classList.toggle("active", tab === "revenue");
   if (tab === "expenses") loadExpenses();
   if (tab === "previous") loadPreviousBookings();
+  if (tab === "revenue") loadMonthlyRevenue();
 }
 
 async function api(path, options = {}) {
@@ -261,18 +271,48 @@ function renderPreviousBookings() {
           <span>${escapeHtml(booking.pickupTime)}</span>
         </div>
         <div>
+          <h3>${escapeHtml(booking.customerName)}</h3>
           ${routeBlock(booking.route)}
           ${flightBlock(booking.flightNumber)}
-          <small>Οδηγός: ${escapeHtml(booking.driver || "-")}</small>
+          <div class="previous-grid">
+            <span><b>Ημερομηνία:</b> ${formatDate(booking.date)}</span>
+            <span><b>Ώρα:</b> ${escapeHtml(booking.pickupTime || "-")}</span>
+            <span><b>Πελάτης:</b> ${escapeHtml(booking.customerName || "-")}</span>
+            <span><b>Τηλέφωνο:</b> ${escapeHtml(booking.phone || "Χωρίς τηλέφωνο")}</span>
+            <span><b>Άτομα:</b> ${escapeHtml(booking.passengers || 0)}</span>
+            <span><b>Όχημα:</b> ${escapeHtml(booking.vehicle || "-")}</span>
+            <span><b>Οδηγός:</b> ${escapeHtml(booking.driver || "-")}</span>
+            <span><b>Τιμή:</b> ${money(booking.price)}</span>
+            <span><b>Τρόπος πληρωμής:</b> ${escapeHtml(booking.paymentMethod || "Μετρητά")}</span>
+            <span><b>Κατάσταση πληρωμής:</b> ${paymentLabels[booking.paymentStatus] || escapeHtml(booking.paymentStatus || "-")}</span>
+            <span class="wide-info"><b>Σημειώσεις:</b> ${escapeHtml(booking.notes || "-")}</span>
+            <span><b>Status:</b> Ολοκληρώθηκε</span>
+          </div>
         </div>
         <div class="previous-money">
           <strong>${money(booking.price)}</strong>
           <span>${escapeHtml(booking.paymentMethod || "Μετρητά")}</span>
         </div>
-        <span class="completed-pill">Ολοκληρώθηκε</span>
+        <div class="previous-actions">
+          <span class="completed-pill">Ολοκληρώθηκε</span>
+          <button type="button" class="small-btn clone-booking-btn" data-id="${booking.id}">Νέα κράτηση</button>
+          <button type="button" class="small-btn ghost edit-previous-btn" data-id="${booking.id}">Επεξεργασία</button>
+        </div>
       </div>
     </article>
   `).join("");
+  list.querySelectorAll(".clone-booking-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      newBookingFromPrevious(Number(button.dataset.id));
+    });
+  });
+  list.querySelectorAll(".edit-previous-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openBooking(state.previousBookings.find((item) => item.id === Number(button.dataset.id)));
+    });
+  });
 }
 
 function routeBlock(route) {
@@ -338,7 +378,7 @@ function openBooking(booking = null) {
   bookingForm.reset();
   $("#formError").textContent = "";
   $("#dialogTitle").textContent = booking ? "Επεξεργασία κράτησης" : "Νέα κράτηση";
-  $("#deleteBtn").hidden = !booking;
+  $("#deleteBtn").hidden = !booking || booking.status === "Completed";
   const values = booking || {
     date: state.date,
     passengers: 1,
@@ -356,6 +396,32 @@ function openBooking(booking = null) {
   bookingDialog.showModal();
 }
 
+function newBookingFromPrevious(id) {
+  const previous = state.previousBookings.find((booking) => booking.id === id);
+  if (!previous) return;
+  openBooking({
+    date: state.date,
+    pickupTime: "",
+    travelTime: "",
+    flightNumber: "",
+    customerName: previous.customerName || "",
+    phone: previous.phone || "",
+    route: previous.route || "",
+    passengers: previous.passengers || 1,
+    price: 0,
+    paymentStatus: "Unpaid",
+    paymentMethod: previous.paymentMethod || "Μετρητά",
+    vehicle: "OPEL VIVARO",
+    driver: "",
+    status: "Pending",
+    notes: previous.notes || ""
+  });
+  state.editingId = null;
+  bookingForm.elements.id.value = "";
+  $("#dialogTitle").textContent = "Νέα κράτηση";
+  $("#deleteBtn").hidden = true;
+}
+
 async function saveBooking(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(bookingForm));
@@ -369,6 +435,8 @@ async function saveBooking(event) {
     });
     bookingDialog.close();
     setDate(data.date || state.date);
+    loadPreviousBookings();
+    loadMonthlyRevenue();
   } catch (error) {
     $("#formError").textContent = error.message;
   }
@@ -461,6 +529,7 @@ async function saveExpense(event) {
     expenseMonth.value = (data.date || state.date).slice(0, 7);
     loadExpenses();
     loadBookings();
+    loadMonthlyRevenue();
   } catch (error) {
     $("#expenseFormError").textContent = error.message;
   }
@@ -472,6 +541,84 @@ async function deleteExpense() {
   await api(`/api/expenses/${state.editingExpenseId}`, { method: "DELETE" });
   expenseDialog.close();
   loadExpenses();
+  loadMonthlyRevenue();
+}
+
+async function loadMonthlyRevenue() {
+  if (!state.token) return;
+  const year = revenueYear.value || new Date(`${state.date}T12:00:00`).getFullYear();
+  const data = await api(`/api/monthly-revenue?year=${year}`);
+  state.monthlyRevenue = data;
+  renderMonthlyRevenue();
+}
+
+function renderMonthlyRevenue() {
+  const data = state.monthlyRevenue;
+  if (!data) return;
+  $("#seasonCash").textContent = money(data.season.cash);
+  $("#seasonCard").textContent = money(data.season.card);
+  $("#seasonTotal").textContent = money(data.season.total);
+  $("#seasonExpenses").textContent = money(data.season.expenses);
+  $("#seasonNet").textContent = money(data.season.net);
+  $("#seasonNet").classList.toggle("negative", Number(data.season.net) < 0);
+  $("#revenueMeta").textContent = `Απρίλιος - Νοέμβριος ${data.year}`;
+
+  $("#revenueMonthList").innerHTML = data.months.map((month) => `
+    <article class="month-card">
+      <header class="month-card-header">
+        <div>
+          <h3>${escapeHtml(month.name)} ${data.year}</h3>
+          <p>${month.entries.length} γραμμές</p>
+        </div>
+        <div class="month-totals">
+          <span>Μετρητά <strong>${money(month.cash)}</strong></span>
+          <span>Κάρτα <strong>${money(month.card)}</strong></span>
+          <span>Γενικό <strong>${money(month.total)}</strong></span>
+          <span>Έξοδα <strong>${money(month.expenses)}</strong></span>
+          <span>Καθαρά <strong class="${Number(month.net) < 0 ? "negative" : ""}">${money(month.net)}</strong></span>
+        </div>
+      </header>
+      <div class="revenue-table-wrap">
+        <table class="revenue-table">
+          <thead>
+            <tr>
+              <th>Ημερομηνία</th>
+              <th>Ώρα</th>
+              <th>Δρομολόγιο</th>
+              <th>Πελάτης</th>
+              <th>Μετρητά</th>
+              <th>Κάρτα</th>
+              <th>Έξοδα</th>
+              <th>Περιγραφή</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${month.entries.length ? month.entries.map((entry) => `
+              <tr class="${entry.type === "expense" ? "expense-row" : ""}">
+                <td>${shortDate(entry.date)}</td>
+                <td>${escapeHtml(entry.time || "-")}</td>
+                <td>${escapeHtml(entry.route || "-")}</td>
+                <td>${escapeHtml(entry.customer || "-")}</td>
+                <td>${entry.cash ? money(entry.cash) : ""}</td>
+                <td>${entry.card ? money(entry.card) : ""}</td>
+                <td>${entry.expenses ? money(entry.expenses) : ""}</td>
+                <td>${escapeHtml(entry.description || "")}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="8" class="empty-cell">Δεν υπάρχουν καταχωρήσεις για τον μήνα.</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th colspan="4">Σύνολα</th>
+              <th>${money(month.cash)}</th>
+              <th>${money(month.card)}</th>
+              <th>${money(month.expenses)}</th>
+              <th>Καθαρά Έσοδα: ${money(month.net)}</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </article>
+  `).join("");
 }
 
 function setDriverFilter(driver) {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0f766e">
     <title>SafeWheels Kos | Κρατήσεις Transfer</title>
-    <link rel="stylesheet" href="/styles.css?v=7">
+    <link rel="stylesheet" href="/styles.css?v=8">
   </head>
   <body>
     <main id="loginScreen" class="login-screen">
@@ -36,6 +36,7 @@
         <button id="bookingsTab" class="tab active" type="button">Κρατήσεις</button>
         <button id="expensesTab" class="tab" type="button">Έξοδα</button>
         <button id="previousTab" class="tab" type="button">Προηγούμενες Μεταφορές <span>ΝΕΟ</span></button>
+        <button id="revenueTab" class="tab" type="button">Σύνολο Εσόδων Μήνα</button>
       </nav>
 
       <section id="bookingsView">
@@ -119,6 +120,31 @@
           <div id="previousList" class="booking-list"></div>
         </section>
       </section>
+
+      <section id="revenueView" hidden>
+        <section class="controls revenue-controls">
+          <label>Έτος<input id="revenueYear" type="number" min="2024" max="2040" step="1"></label>
+          <button id="refreshRevenueBtn" type="button">Ανανέωση</button>
+        </section>
+
+        <section class="summary-strip revenue-summary-strip">
+          <div><span id="seasonCash">0,00 €</span><small>Σύνολο Μετρητών</small></div>
+          <div><span id="seasonCard">0,00 €</span><small>Σύνολο Κάρτας</small></div>
+          <div><span id="seasonTotal">0,00 €</span><small>Γενικό Σύνολο</small></div>
+          <div><span id="seasonExpenses">0,00 €</span><small>Έξοδα</small></div>
+          <div><span id="seasonNet">0,00 €</span><small>Καθαρά Έσοδα</small></div>
+        </section>
+
+        <section class="calendar-shell">
+          <div class="day-heading">
+            <div>
+              <h2>Σύνολο Εσόδων Μήνα</h2>
+              <p id="revenueMeta">Απρίλιος - Νοέμβριος</p>
+            </div>
+          </div>
+          <div id="revenueMonthList" class="revenue-month-list"></div>
+        </section>
+      </section>
     </main>
 
     <dialog id="bookingDialog">
@@ -182,6 +208,6 @@
       </form>
     </dialog>
 
-    <script src="/app.js?v=7"></script>
+    <script src="/app.js?v=8"></script>
   </body>
 </html>
