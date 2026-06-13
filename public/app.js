@@ -5,6 +5,7 @@ const state = {
   driverFilter: "",
   activeTab: "bookings",
   bookings: [],
+  previousBookings: [],
   expenses: [],
   editingId: null,
   editingExpenseId: null
@@ -45,6 +46,7 @@ function bindEvents() {
   $("#logoutBtn").addEventListener("click", logout);
   $("#bookingsTab").addEventListener("click", () => switchTab("bookings"));
   $("#expensesTab").addEventListener("click", () => switchTab("expenses"));
+  $("#previousTab").addEventListener("click", () => switchTab("previous"));
   $("#prevDay").addEventListener("click", () => changeDay(-1));
   $("#nextDay").addEventListener("click", () => changeDay(1));
   $("#todayBtn").addEventListener("click", () => setDate(new Date().toISOString().slice(0, 10)));
@@ -61,6 +63,7 @@ function bindEvents() {
   $("#cancelBtn").addEventListener("click", () => bookingDialog.close());
   $("#deleteBtn").addEventListener("click", deleteBooking);
   $("#printBtn").addEventListener("click", () => window.print());
+  $("#refreshPreviousBtn").addEventListener("click", loadPreviousBookings);
   bookingForm.addEventListener("submit", saveBooking);
   bookingForm.querySelectorAll(".time-entry").forEach((input) => bindTimeEntry(input));
 
@@ -110,15 +113,19 @@ function showApp() {
   app.hidden = false;
   loadBookings();
   loadExpenses();
+  loadPreviousBookings();
 }
 
 function switchTab(tab) {
   state.activeTab = tab;
   $("#bookingsView").hidden = tab !== "bookings";
   $("#expensesView").hidden = tab !== "expenses";
+  $("#previousView").hidden = tab !== "previous";
   $("#bookingsTab").classList.toggle("active", tab === "bookings");
   $("#expensesTab").classList.toggle("active", tab === "expenses");
+  $("#previousTab").classList.toggle("active", tab === "previous");
   if (tab === "expenses") loadExpenses();
+  if (tab === "previous") loadPreviousBookings();
 }
 
 async function api(path, options = {}) {
@@ -160,6 +167,7 @@ async function loadBookings() {
   state.bookings = bookings;
   renderBookings();
   renderTotals(calculateTotals(filteredBookings()));
+  if (state.activeTab === "previous") loadPreviousBookings();
 }
 
 function renderBookings() {
@@ -186,7 +194,8 @@ function renderBookings() {
           <div>
             <h3>${escapeHtml(booking.customerName)}</h3>
             <div class="booking-details">
-              <span>${escapeHtml(booking.route || "Χωρίς διαδρομή")}</span>
+              ${routeBlock(booking.route)}
+              ${flightBlock(booking.flightNumber)}
               <span>${escapeHtml(booking.phone || "Χωρίς τηλέφωνο")}</span>
               <span>${booking.passengers} άτομα · ${escapeHtml(booking.vehicle)}</span>
               <span>Πτήση/Ferry: ${escapeHtml(booking.travelTime || "-")} · Οδηγός: ${escapeHtml(booking.driver || "-")}</span>
@@ -228,6 +237,67 @@ function calculateTotals(bookings) {
     }
     return totals;
   }, { bookings: 0, cash: 0, card: 0, total: 0 });
+}
+
+async function loadPreviousBookings() {
+  if (!state.token) return;
+  const previous = await api("/api/bookings?history=1");
+  state.previousBookings = previous;
+  renderPreviousBookings();
+}
+
+function renderPreviousBookings() {
+  const list = $("#previousList");
+  $("#previousMeta").textContent = `${state.previousBookings.length} ολοκληρωμένες μεταφορές`;
+  if (!state.previousBookings.length) {
+    list.innerHTML = `<div class="empty">Δεν υπάρχουν προηγούμενες μεταφορές.</div>`;
+    return;
+  }
+  list.innerHTML = state.previousBookings.map((booking) => `
+    <article class="previous-card" data-id="${booking.id}">
+      <div class="previous-main">
+        <div class="previous-date">
+          <strong>${shortDate(booking.date)}</strong>
+          <span>${escapeHtml(booking.pickupTime)}</span>
+        </div>
+        <div>
+          ${routeBlock(booking.route)}
+          ${flightBlock(booking.flightNumber)}
+          <small>Οδηγός: ${escapeHtml(booking.driver || "-")}</small>
+        </div>
+        <div class="previous-money">
+          <strong>${money(booking.price)}</strong>
+          <span>${escapeHtml(booking.paymentMethod || "Μετρητά")}</span>
+        </div>
+        <span class="completed-pill">Ολοκληρώθηκε</span>
+      </div>
+    </article>
+  `).join("");
+}
+
+function routeBlock(route) {
+  const parts = splitRoute(route);
+  if (!parts) return `<span class="route-chip">${escapeHtml(route || "Χωρίς διαδρομή")}</span>`;
+  return `
+    <span class="route-chip">
+      <strong>${escapeHtml(parts.from)}</strong>
+      <i></i>
+      <strong>${escapeHtml(parts.to)}</strong>
+    </span>
+  `;
+}
+
+function flightBlock(flightNumber) {
+  if (!flightNumber) return `<span class="flight-chip">✈ -</span>`;
+  return `<span class="flight-chip">✈ ${escapeHtml(flightNumber)}</span>`;
+}
+
+function splitRoute(route) {
+  const clean = String(route || "").trim();
+  if (!clean) return null;
+  const parts = clean.split(/\s*(?:->|→|-)\s*/).filter(Boolean);
+  if (parts.length < 2) return null;
+  return { from: parts[0].toUpperCase(), to: parts.slice(1).join(" ").toUpperCase() };
 }
 
 function renderTotals(totals) {
@@ -273,6 +343,7 @@ function openBooking(booking = null) {
     date: state.date,
     passengers: 1,
     price: 0,
+    flightNumber: "",
     paymentStatus: "Unpaid",
     paymentMethod: "Μετρητά",
     vehicle: "OPEL VIVARO",

@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).parent
 PUBLIC = ROOT / "public"
@@ -15,6 +16,7 @@ SESSIONS = set()
 LOGIN_USERNAME = os.environ.get("SAFEWHEELS_USERNAME", "admin")
 LOGIN_PASSWORD = os.environ.get("SAFEWHEELS_PASSWORD", "safewheels")
 SEED_DEMO_DATA = os.environ.get("SAFEWHEELS_SEED_DEMO", "1") == "1"
+APP_TZ = ZoneInfo(os.environ.get("SAFEWHEELS_TZ", "Europe/Athens"))
 
 VEHICLES = {"OPEL VIVARO", "PEUGEOT 5008"}
 DRIVERS = {"Θεόδωρος Τσιάμης", "Γεώργιος Τσιάμης", "Ιωάννης Τσιάμης"}
@@ -42,6 +44,7 @@ def init_db():
               date TEXT NOT NULL,
               pickupTime TEXT NOT NULL,
               travelTime TEXT,
+              flightNumber TEXT,
               customerName TEXT NOT NULL,
               phone TEXT,
               hotel TEXT,
@@ -65,6 +68,8 @@ def init_db():
         columns = table_columns(conn, "bookings")
         if "paymentMethod" not in columns:
             conn.execute("ALTER TABLE bookings ADD COLUMN paymentMethod TEXT DEFAULT 'Μετρητά'")
+        if "flightNumber" not in columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN flightNumber TEXT")
         conn.execute("UPDATE bookings SET vehicle = 'OPEL VIVARO' WHERE vehicle IN ('SafeWheels 1', 'SafeWheels1')")
         conn.execute("UPDATE bookings SET vehicle = 'PEUGEOT 5008' WHERE vehicle IN ('SafeWheels 2', 'SafeWheels2')")
         conn.execute("UPDATE bookings SET paymentMethod = 'Μετρητά' WHERE paymentMethod IS NULL OR paymentMethod = ''")
@@ -90,14 +95,14 @@ def init_db():
             return
         today = datetime.now().date().isoformat()
         seed = [
-            (today, "08:20", "10:05", "Maria Jensen", "+45 20 12 45 88", "Aqua Blu Boutique Hotel", "Αεροδρόμιο Κω -> Ξενοδοχείο", 2, 2, 45, "Paid", "Μετρητά", "OPEL VIVARO", "Θεόδωρος Τσιάμης", "Confirmed", "Παιδικό κάθισμα"),
-            (today, "14:10", "15:00", "Luca Moretti", "+39 333 700 1200", "Kos Aktis Art Hotel", "Λιμάνι Κω -> Ξενοδοχείο", 4, 3, 35, "Unpaid", "Κάρτα", "PEUGEOT 5008", "Γεώργιος Τσιάμης", "Pending", "Άφιξη με ferry από Ρόδο"),
+            (today, "08:20", "10:05", "A3 1234", "Maria Jensen", "+45 20 12 45 88", "Aqua Blu Boutique Hotel", "Αεροδρόμιο Κω -> Ξενοδοχείο", 2, 2, 45, "Paid", "Μετρητά", "OPEL VIVARO", "Θεόδωρος Τσιάμης", "Confirmed", "Παιδικό κάθισμα"),
+            (today, "14:10", "15:00", "FR 2451", "Luca Moretti", "+39 333 700 1200", "Kos Aktis Art Hotel", "Λιμάνι Κω -> Ξενοδοχείο", 4, 3, 35, "Unpaid", "Κάρτα", "PEUGEOT 5008", "Γεώργιος Τσιάμης", "Pending", "Άφιξη με ferry από Ρόδο"),
         ]
         conn.executemany(
             """
             INSERT INTO bookings
-            (date, pickupTime, travelTime, customerName, phone, hotel, route, passengers, luggage, price, paymentStatus, paymentMethod, vehicle, driver, status, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (date, pickupTime, travelTime, flightNumber, customerName, phone, hotel, route, passengers, luggage, price, paymentStatus, paymentMethod, vehicle, driver, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             seed,
         )
@@ -126,6 +131,7 @@ def normalize_booking(data):
         "date": str(data.get("date") or "")[:10],
         "pickupTime": str(data.get("pickupTime") or ""),
         "travelTime": str(data.get("travelTime") or ""),
+        "flightNumber": str(data.get("flightNumber") or "").strip().upper(),
         "customerName": str(data.get("customerName") or "").strip(),
         "phone": str(data.get("phone") or "").strip(),
         "hotel": str(data.get("hotel") or "").strip(),
@@ -172,6 +178,32 @@ def expense_error(expense):
     if expense["amount"] < 0:
         return "Το ποσό δεν μπορεί να είναι αρνητικό."
     return None
+
+
+def auto_complete_transfers(conn):
+    cutoff = datetime.now(APP_TZ) - timedelta(minutes=30)
+    rows = conn.execute(
+        """
+        SELECT id, date, pickupTime
+        FROM bookings
+        WHERE status NOT IN ('Completed', 'Cancelled')
+        """
+    ).fetchall()
+    complete_ids = []
+    for row in rows:
+        try:
+            pickup = datetime.strptime(f"{row['date']} {row['pickupTime']}", "%Y-%m-%d %H:%M")
+            pickup = pickup.replace(tzinfo=APP_TZ)
+        except ValueError:
+            continue
+        if pickup <= cutoff:
+            complete_ids.append(row["id"])
+    if complete_ids:
+        placeholders = ",".join(["?"] * len(complete_ids))
+        conn.execute(
+            f"UPDATE bookings SET status = 'Completed', updatedAt = CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
+            complete_ids,
+        )
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -249,8 +281,11 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.authorized():
             return self.send_json({"error": "Unauthorized"}, 401)
         query = parse_qs(parsed.query)
+        history = query.get("history", ["0"])[0] == "1"
         where = []
         params = {}
+        with db() as conn:
+            auto_complete_transfers(conn)
         if query.get("date", [""])[0]:
             where.append("date = :date")
             params["date"] = query["date"][0]
@@ -261,10 +296,14 @@ class Handler(SimpleHTTPRequestHandler):
         if query.get("q", [""])[0]:
             where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q)")
             params["q"] = f"%{query['q'][0]}%"
+        if history:
+            where.append("status = 'Completed'")
+        else:
+            where.append("status != 'Completed'")
         sql = "SELECT * FROM bookings"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY date ASC, pickupTime ASC"
+        sql += " ORDER BY date DESC, pickupTime DESC" if history else " ORDER BY date ASC, pickupTime ASC"
         with db() as conn:
             rows = conn.execute(sql, params).fetchall()
         return self.send_json([row_to_dict(row) for row in rows])
@@ -295,6 +334,7 @@ class Handler(SimpleHTTPRequestHandler):
         start = query.get("start", [""])[0]
         end = query.get("end", [""])[0]
         with db() as conn:
+            auto_complete_transfers(conn)
             row = conn.execute(
                 """
                 SELECT
@@ -303,7 +343,7 @@ class Handler(SimpleHTTPRequestHandler):
                   COALESCE(SUM(CASE WHEN paymentMethod = 'Κάρτα' THEN price ELSE 0 END), 0) AS card,
                   COALESCE(SUM(price), 0) AS total
                 FROM bookings
-                WHERE date BETWEEN ? AND ? AND status != 'Cancelled'
+                WHERE date BETWEEN ? AND ? AND status NOT IN ('Cancelled', 'Completed')
                 """,
                 (start, end),
             ).fetchone()
