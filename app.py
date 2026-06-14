@@ -28,9 +28,12 @@ SEASON_MONTHS = [
     (11, "Νοέμβριος"),
 ]
 
-VEHICLES = {"OPEL VIVARO", "PEUGEOT 5008"}
-DRIVERS = {"Θεόδωρος Τσιάμης", "Γεώργιος Τσιάμης", "Ιωάννης Τσιάμης"}
-PAYMENT_METHODS = {"Μετρητά", "Κάρτα"}
+DEFAULT_VEHICLES = ["OPEL VIVARO", "PEUGEOT 5008"]
+DEFAULT_DRIVERS = ["Θεόδωρος Τσιάμης", "Γεώργιος Τσιάμης", "Ιωάννης Τσιάμης"]
+DEFAULT_BOOKING_SOURCES = ["PRIVATE", "WELCOME", "CONNECTO"]
+PAYMENT_METHODS = {"Μετρητά", "Κάρτα", "Πίστωση"}
+TAX_STATUSES = {"Καταχωρημένο", "Μη Καταχωρημένο"}
+AUTO_COMPLETE_DELAY = timedelta(hours=1, minutes=30)
 
 
 def db():
@@ -43,6 +46,48 @@ def db():
 def table_columns(conn, table):
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return {row["name"] for row in rows}
+
+
+def upsert_option(conn, table, name):
+    clean = str(name or "").strip()
+    if not clean:
+        return
+    conn.execute(
+        f"""
+        INSERT INTO {table} (name, active) VALUES (?, 1)
+        ON CONFLICT(name) DO UPDATE SET active = 1, updatedAt = CURRENT_TIMESTAMP
+        """,
+        (clean,),
+    )
+
+
+def seed_options(conn):
+    for name in DEFAULT_VEHICLES:
+        upsert_option(conn, "vehicles", name)
+    for name in DEFAULT_DRIVERS:
+        upsert_option(conn, "drivers", name)
+    for name in DEFAULT_BOOKING_SOURCES:
+        upsert_option(conn, "booking_sources", name)
+    for row in conn.execute("SELECT DISTINCT vehicle AS name FROM bookings WHERE vehicle IS NOT NULL AND vehicle != ''").fetchall():
+        upsert_option(conn, "vehicles", row["name"])
+    for row in conn.execute("SELECT DISTINCT driver AS name FROM bookings WHERE driver IS NOT NULL AND driver != ''").fetchall():
+        upsert_option(conn, "drivers", row["name"])
+    for row in conn.execute("SELECT DISTINCT bookingSource AS name FROM bookings WHERE bookingSource IS NOT NULL AND bookingSource != ''").fetchall():
+        upsert_option(conn, "booking_sources", row["name"])
+
+
+def active_option_names(conn, table):
+    return [
+        row["name"]
+        for row in conn.execute(f"SELECT name FROM {table} WHERE active = 1 ORDER BY name COLLATE NOCASE").fetchall()
+    ]
+
+
+def active_option_rows(conn, table):
+    return [
+        row_to_dict(row)
+        for row in conn.execute(f"SELECT id, name FROM {table} WHERE active = 1 ORDER BY name COLLATE NOCASE").fetchall()
+    ]
 
 
 def init_db():
@@ -68,6 +113,8 @@ def init_db():
               paymentMethod TEXT DEFAULT 'Μετρητά',
               vehicle TEXT DEFAULT 'OPEL VIVARO',
               driver TEXT,
+              bookingSource TEXT DEFAULT 'PRIVATE',
+              taxStatus TEXT DEFAULT 'Μη Καταχωρημένο',
               status TEXT DEFAULT 'Pending',
               notes TEXT,
               createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -80,9 +127,15 @@ def init_db():
             conn.execute("ALTER TABLE bookings ADD COLUMN paymentMethod TEXT DEFAULT 'Μετρητά'")
         if "flightNumber" not in columns:
             conn.execute("ALTER TABLE bookings ADD COLUMN flightNumber TEXT")
+        if "bookingSource" not in columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN bookingSource TEXT DEFAULT 'PRIVATE'")
+        if "taxStatus" not in columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN taxStatus TEXT DEFAULT 'Μη Καταχωρημένο'")
         conn.execute("UPDATE bookings SET vehicle = 'OPEL VIVARO' WHERE vehicle IN ('SafeWheels 1', 'SafeWheels1')")
         conn.execute("UPDATE bookings SET vehicle = 'PEUGEOT 5008' WHERE vehicle IN ('SafeWheels 2', 'SafeWheels2')")
         conn.execute("UPDATE bookings SET paymentMethod = 'Μετρητά' WHERE paymentMethod IS NULL OR paymentMethod = ''")
+        conn.execute("UPDATE bookings SET bookingSource = 'PRIVATE' WHERE bookingSource IS NULL OR bookingSource = ''")
+        conn.execute("UPDATE bookings SET taxStatus = 'Μη Καταχωρημένο' WHERE taxStatus IS NULL OR taxStatus = ''")
 
         conn.execute(
             """
@@ -93,26 +146,65 @@ def init_db():
               description TEXT,
               amount REAL DEFAULT 0,
               paymentMethod TEXT DEFAULT 'Μετρητά',
+              vehicle TEXT,
               notes TEXT,
               createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
               updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        expense_columns = table_columns(conn, "expenses")
+        if "vehicle" not in expense_columns:
+            conn.execute("ALTER TABLE expenses ADD COLUMN vehicle TEXT")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vehicles (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              active INTEGER DEFAULT 1,
+              createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+              updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS drivers (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              active INTEGER DEFAULT 1,
+              createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+              updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS booking_sources (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              active INTEGER DEFAULT 1,
+              createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+              updatedAt TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        seed_options(conn)
 
         total = conn.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"]
         if total or not SEED_DEMO_DATA:
             return
         today = datetime.now().date().isoformat()
         seed = [
-            (today, "08:20", "10:05", "A3 1234", "Maria Jensen", "+45 20 12 45 88", "Aqua Blu Boutique Hotel", "Αεροδρόμιο Κω -> Ξενοδοχείο", 2, 2, 45, "Paid", "Μετρητά", "OPEL VIVARO", "Θεόδωρος Τσιάμης", "Confirmed", "Παιδικό κάθισμα"),
-            (today, "14:10", "15:00", "FR 2451", "Luca Moretti", "+39 333 700 1200", "Kos Aktis Art Hotel", "Λιμάνι Κω -> Ξενοδοχείο", 4, 3, 35, "Unpaid", "Κάρτα", "PEUGEOT 5008", "Γεώργιος Τσιάμης", "Pending", "Άφιξη με ferry από Ρόδο"),
+            (today, "08:20", "10:05", "A3 1234", "Maria Jensen", "+45 20 12 45 88", "Aqua Blu Boutique Hotel", "Αεροδρόμιο Κω -> Ξενοδοχείο", 2, 2, 45, "Paid", "Μετρητά", "OPEL VIVARO", "Θεόδωρος Τσιάμης", "PRIVATE", "Μη Καταχωρημένο", "Confirmed", "Παιδικό κάθισμα"),
+            (today, "14:10", "15:00", "FR 2451", "Luca Moretti", "+39 333 700 1200", "Kos Aktis Art Hotel", "Λιμάνι Κω -> Ξενοδοχείο", 4, 3, 35, "Unpaid", "Κάρτα", "PEUGEOT 5008", "Γεώργιος Τσιάμης", "WELCOME", "Μη Καταχωρημένο", "Pending", "Άφιξη με ferry από Ρόδο"),
         ]
         conn.executemany(
             """
             INSERT INTO bookings
-            (date, pickupTime, travelTime, flightNumber, customerName, phone, hotel, route, passengers, luggage, price, paymentStatus, paymentMethod, vehicle, driver, status, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (date, pickupTime, travelTime, flightNumber, customerName, phone, hotel, route, passengers, luggage, price, paymentStatus, paymentMethod, vehicle, driver, bookingSource, taxStatus, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             seed,
         )
@@ -137,6 +229,8 @@ def normalize_booking(data):
     vehicle = str(data.get("vehicle") or "OPEL VIVARO")
     driver = str(data.get("driver") or "").strip()
     payment_method = str(data.get("paymentMethod") or "Μετρητά")
+    booking_source = str(data.get("bookingSource") or "PRIVATE").strip().upper()
+    tax_status = str(data.get("taxStatus") or "Μη Καταχωρημένο").strip()
     return {
         "date": str(data.get("date") or "")[:10],
         "pickupTime": str(data.get("pickupTime") or ""),
@@ -151,8 +245,10 @@ def normalize_booking(data):
         "price": price,
         "paymentStatus": str(data.get("paymentStatus") or "Unpaid"),
         "paymentMethod": payment_method if payment_method in PAYMENT_METHODS else "Μετρητά",
-        "vehicle": vehicle if vehicle in VEHICLES else "OPEL VIVARO",
-        "driver": driver if driver in DRIVERS else driver,
+        "vehicle": vehicle,
+        "driver": driver,
+        "bookingSource": booking_source or "PRIVATE",
+        "taxStatus": tax_status if tax_status in TAX_STATUSES else "Μη Καταχωρημένο",
         "status": str(data.get("status") or "Pending"),
         "notes": str(data.get("notes") or "").strip(),
     }
@@ -166,6 +262,7 @@ def normalize_expense(data):
         "description": str(data.get("description") or "").strip(),
         "amount": float(data.get("amount") or 0),
         "paymentMethod": payment_method if payment_method in PAYMENT_METHODS else "Μετρητά",
+        "vehicle": str(data.get("vehicle") or "").strip(),
         "notes": str(data.get("notes") or "").strip(),
     }
 
@@ -191,7 +288,7 @@ def expense_error(expense):
 
 
 def auto_complete_transfers(conn):
-    cutoff = datetime.now(APP_TZ) - timedelta(minutes=30)
+    cutoff = datetime.now(APP_TZ) - AUTO_COMPLETE_DELAY
     rows = conn.execute(
         """
         SELECT id, date, pickupTime
@@ -241,6 +338,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.create_booking()
         if self.path == "/api/expenses":
             return self.create_expense()
+        if self.path.startswith("/api/options/"):
+            return self.create_option()
         self.send_error(404)
 
     def do_GET(self):
@@ -255,6 +354,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.expense_summary(parsed)
         if parsed.path == "/api/monthly-revenue":
             return self.monthly_revenue(parsed)
+        if parsed.path == "/api/options":
+            return self.options()
         if parsed.path.startswith("/api/"):
             return self.send_error(404)
         return super().do_GET()
@@ -262,9 +363,13 @@ class Handler(SimpleHTTPRequestHandler):
     def do_PUT(self):
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/bookings/"):
+            if parsed.path.endswith("/tax-status"):
+                return self.update_booking_tax_status(parsed)
             return self.update_booking(parsed)
         if parsed.path.startswith("/api/expenses/"):
             return self.update_expense(parsed)
+        if parsed.path.startswith("/api/options/"):
+            return self.update_option(parsed)
         return self.send_error(404)
 
     def do_DELETE(self):
@@ -273,6 +378,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.delete_row("bookings", parsed)
         if parsed.path.startswith("/api/expenses/"):
             return self.delete_row("expenses", parsed)
+        if parsed.path.startswith("/api/options/"):
+            return self.delete_option(parsed)
         return self.send_error(404)
 
     def create_booking(self):
@@ -298,6 +405,8 @@ class Handler(SimpleHTTPRequestHandler):
         params = {}
         with db() as conn:
             auto_complete_transfers(conn)
+        cutoff_text = (datetime.now(APP_TZ) - AUTO_COMPLETE_DELAY).strftime("%Y-%m-%d %H:%M")
+        params["cutoff"] = cutoff_text
         if query.get("date", [""])[0]:
             where.append("date = :date")
             params["date"] = query["date"][0]
@@ -306,12 +415,16 @@ class Handler(SimpleHTTPRequestHandler):
             params["start"] = query["start"][0]
             params["end"] = query["end"][0]
         if query.get("q", [""])[0]:
-            where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q)")
+            where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
             params["q"] = f"%{query['q'][0]}%"
+        if query.get("tax", [""])[0] in TAX_STATUSES:
+            where.append("taxStatus = :tax")
+            params["tax"] = query["tax"][0]
         if history:
-            where.append("status = 'Completed'")
+            where.append("status = 'Completed' AND (date || ' ' || pickupTime) <= :cutoff")
         else:
-            where.append("status != 'Completed'")
+            where.append("status != 'Cancelled'")
+            where.append("(status != 'Completed' OR (date || ' ' || pickupTime) > :cutoff)")
         sql = "SELECT * FROM bookings"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -347,17 +460,20 @@ class Handler(SimpleHTTPRequestHandler):
         end = query.get("end", [""])[0]
         with db() as conn:
             auto_complete_transfers(conn)
+            cutoff_text = (datetime.now(APP_TZ) - AUTO_COMPLETE_DELAY).strftime("%Y-%m-%d %H:%M")
             row = conn.execute(
                 """
                 SELECT
                   COUNT(*) AS bookings,
                   COALESCE(SUM(CASE WHEN paymentMethod = 'Μετρητά' THEN price ELSE 0 END), 0) AS cash,
-                  COALESCE(SUM(CASE WHEN paymentMethod = 'Κάρτα' THEN price ELSE 0 END), 0) AS card,
+                  COALESCE(SUM(CASE WHEN paymentMethod IN ('Κάρτα', 'Πίστωση') THEN price ELSE 0 END), 0) AS card,
                   COALESCE(SUM(price), 0) AS total
                 FROM bookings
-                WHERE date BETWEEN ? AND ? AND status NOT IN ('Cancelled', 'Completed')
+                WHERE date BETWEEN ? AND ?
+                  AND status != 'Cancelled'
+                  AND (status != 'Completed' OR (date || ' ' || pickupTime) > ?)
                 """,
-                (start, end),
+                (start, end, cutoff_text),
             ).fetchone()
         return self.send_json(row_to_dict(row))
 
@@ -463,7 +579,7 @@ class Handler(SimpleHTTPRequestHandler):
                 ).fetchall()
                 expenses = conn.execute(
                     """
-                    SELECT date, description, category, amount
+                    SELECT date, description, category, amount, vehicle
                     FROM expenses
                     WHERE date BETWEEN ? AND ?
                     ORDER BY date ASC, id ASC
@@ -477,7 +593,10 @@ class Handler(SimpleHTTPRequestHandler):
                 expense_total = 0
                 for booking in bookings:
                     price = float(booking["price"] or 0)
-                    is_card = booking["paymentMethod"] == "Κάρτα"
+                    payment_method = booking["paymentMethod"] or "Μετρητά"
+                    is_cash = payment_method == "Μετρητά"
+                    is_card = payment_method in ("Κάρτα", "Πίστωση")
+                    is_credit = payment_method == "Πίστωση"
                     if is_card:
                         card_total += price
                     else:
@@ -488,14 +607,17 @@ class Handler(SimpleHTTPRequestHandler):
                         "time": booking["pickupTime"],
                         "route": booking["route"] or "",
                         "customer": booking["customerName"] or "",
-                        "cash": 0 if is_card else price,
+                        "cash": price if is_cash else 0,
                         "card": price if is_card else 0,
                         "expenses": 0,
-                        "description": "",
+                        "description": f"Πίστωση: {price:.2f} €" if is_credit else "",
                     })
                 for expense in expenses:
                     amount = float(expense["amount"] or 0)
                     expense_total += amount
+                    description = expense["description"] or expense["category"] or ""
+                    if expense["vehicle"]:
+                        description = f"{description} · {expense['vehicle']}" if description else expense["vehicle"]
                     entries.append({
                         "type": "expense",
                         "date": expense["date"],
@@ -505,7 +627,7 @@ class Handler(SimpleHTTPRequestHandler):
                         "cash": 0,
                         "card": 0,
                         "expenses": amount,
-                        "description": expense["description"] or expense["category"] or "",
+                        "description": description,
                     })
                 entries.sort(key=lambda item: (item["date"], item["time"] or "99:99", item["type"]))
                 total = cash_total + card_total
@@ -524,6 +646,109 @@ class Handler(SimpleHTTPRequestHandler):
                 for key in season:
                     season[key] += month_data[key]
         return self.send_json({"year": year, "months": months, "season": season})
+
+    def option_table(self, kind):
+        return {
+            "vehicles": "vehicles",
+            "drivers": "drivers",
+            "sources": "booking_sources",
+        }.get(kind)
+
+    def options(self):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        with db() as conn:
+            return self.send_json({
+                "vehicles": active_option_names(conn, "vehicles"),
+                "drivers": active_option_names(conn, "drivers"),
+                "bookingSources": active_option_names(conn, "booking_sources"),
+                "optionDetails": {
+                    "vehicles": active_option_rows(conn, "vehicles"),
+                    "drivers": active_option_rows(conn, "drivers"),
+                    "sources": active_option_rows(conn, "booking_sources"),
+                },
+                "paymentMethods": ["Μετρητά", "Κάρτα", "Πίστωση"],
+                "taxStatuses": ["Καταχωρημένο", "Μη Καταχωρημένο"],
+            })
+
+    def create_option(self):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        kind = self.path.rsplit("/", 1)[-1]
+        table = self.option_table(kind)
+        if not table:
+            return self.send_json({"error": "Άγνωστη επιλογή."}, 404)
+        name = str(self.read_json().get("name") or "").strip()
+        if not name:
+            return self.send_json({"error": "Το όνομα είναι υποχρεωτικό."}, 400)
+        if kind == "sources":
+            name = name.upper()
+        with db() as conn:
+            upsert_option(conn, table, name)
+            saved = conn.execute(f"SELECT * FROM {table} WHERE name = ?", (name,)).fetchone()
+        return self.send_json(row_to_dict(saved), 201)
+
+    def update_option(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) != 4:
+            return self.send_json({"error": "Λάθος διεύθυνση επιλογής."}, 404)
+        _, _, kind, item_id = parts
+        table = self.option_table(kind)
+        if not table:
+            return self.send_json({"error": "Άγνωστη επιλογή."}, 404)
+        name = str(self.read_json().get("name") or "").strip()
+        if not name:
+            return self.send_json({"error": "Το όνομα είναι υποχρεωτικό."}, 400)
+        if kind == "sources":
+            name = name.upper()
+        with db() as conn:
+            cur = conn.execute(
+                f"UPDATE {table} SET name = ?, active = 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (name, item_id),
+            )
+            if cur.rowcount == 0:
+                return self.send_json({"error": "Δεν βρέθηκε η επιλογή."}, 404)
+            saved = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (item_id,)).fetchone()
+        return self.send_json(row_to_dict(saved))
+
+    def delete_option(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) != 4:
+            return self.send_json({"error": "Λάθος διεύθυνση επιλογής."}, 404)
+        _, _, kind, item_id = parts
+        table = self.option_table(kind)
+        if not table:
+            return self.send_json({"error": "Άγνωστη επιλογή."}, 404)
+        with db() as conn:
+            cur = conn.execute(
+                f"UPDATE {table} SET active = 0, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (item_id,),
+            )
+        if cur.rowcount == 0:
+            return self.send_json({"error": "Δεν βρέθηκε η επιλογή."}, 404)
+        self.send_response(204)
+        self.end_headers()
+
+    def update_booking_tax_status(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        booking_id = parsed.path.strip("/").split("/")[-2]
+        tax_status = str(self.read_json().get("taxStatus") or "").strip()
+        if tax_status not in TAX_STATUSES:
+            return self.send_json({"error": "Λάθος κατάσταση ΑΑΔΕ."}, 400)
+        with db() as conn:
+            cur = conn.execute(
+                "UPDATE bookings SET taxStatus = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (tax_status, booking_id),
+            )
+            if cur.rowcount == 0:
+                return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
+            saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        return self.send_json(row_to_dict(saved))
 
     def delete_row(self, table, parsed):
         if not self.authorized():

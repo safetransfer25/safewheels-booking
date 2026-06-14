@@ -3,11 +3,20 @@ const state = {
   date: new Date().toISOString().slice(0, 10),
   viewMode: "day",
   driverFilter: "",
+  taxFilter: "",
   activeTab: "bookings",
   bookings: [],
   previousBookings: [],
   monthlyRevenue: null,
   expenses: [],
+  options: {
+    vehicles: ["OPEL VIVARO", "PEUGEOT 5008"],
+    drivers: ["Θεόδωρος Τσιάμης", "Γεώργιος Τσιάμης", "Ιωάννης Τσιάμης"],
+    bookingSources: ["PRIVATE", "WELCOME", "CONNECTO"],
+    paymentMethods: ["Μετρητά", "Κάρτα", "Πίστωση"],
+    taxStatuses: ["Καταχωρημένο", "Μη Καταχωρημένο"],
+    optionDetails: { vehicles: [], drivers: [], sources: [] }
+  },
   editingId: null,
   editingExpenseId: null
 };
@@ -22,6 +31,7 @@ const expenseForm = $("#expenseForm");
 const selectedDate = $("#selectedDate");
 const expenseMonth = $("#expenseMonth");
 const revenueYear = $("#revenueYear");
+const previousSearchInput = $("#previousSearchInput");
 
 const statusLabels = {
   Pending: "Σε αναμονή",
@@ -51,6 +61,7 @@ function bindEvents() {
   $("#expensesTab").addEventListener("click", () => switchTab("expenses"));
   $("#previousTab").addEventListener("click", () => switchTab("previous"));
   $("#revenueTab").addEventListener("click", () => switchTab("revenue"));
+  $("#fleetTab").addEventListener("click", () => switchTab("fleet"));
   $("#prevDay").addEventListener("click", () => changeDay(-1));
   $("#nextDay").addEventListener("click", () => changeDay(1));
   $("#todayBtn").addEventListener("click", () => setDate(new Date().toISOString().slice(0, 10)));
@@ -61,7 +72,11 @@ function bindEvents() {
   document.querySelectorAll(".driver-tab").forEach((button) => {
     button.addEventListener("click", () => setDriverFilter(button.dataset.driver || ""));
   });
+  document.querySelectorAll(".tax-tab").forEach((button) => {
+    button.addEventListener("click", () => setTaxFilter(button.dataset.tax || ""));
+  });
   $("#searchInput").addEventListener("input", debounce(loadBookings, 220));
+  previousSearchInput.addEventListener("input", debounce(loadPreviousBookings, 220));
   $("#addBookingBtn").addEventListener("click", () => openBooking());
   $("#closeDialog").addEventListener("click", () => bookingDialog.close());
   $("#cancelBtn").addEventListener("click", () => bookingDialog.close());
@@ -79,6 +94,9 @@ function bindEvents() {
   $("#cancelExpenseBtn").addEventListener("click", () => expenseDialog.close());
   $("#deleteExpenseBtn").addEventListener("click", deleteExpense);
   expenseForm.addEventListener("submit", saveExpense);
+  $("#vehicleForm").addEventListener("submit", (event) => saveOption(event, "vehicles"));
+  $("#driverForm").addEventListener("submit", (event) => saveOption(event, "drivers"));
+  $("#sourceForm").addEventListener("submit", (event) => saveOption(event, "sources"));
 }
 
 async function login(event) {
@@ -117,10 +135,12 @@ function logout() {
 function showApp() {
   loginScreen.hidden = true;
   app.hidden = false;
-  loadBookings();
-  loadExpenses();
-  loadPreviousBookings();
-  loadMonthlyRevenue();
+  loadOptions().then(() => {
+    loadBookings();
+    loadExpenses();
+    loadPreviousBookings();
+    loadMonthlyRevenue();
+  });
 }
 
 function switchTab(tab) {
@@ -129,13 +149,16 @@ function switchTab(tab) {
   $("#expensesView").hidden = tab !== "expenses";
   $("#previousView").hidden = tab !== "previous";
   $("#revenueView").hidden = tab !== "revenue";
+  $("#fleetView").hidden = tab !== "fleet";
   $("#bookingsTab").classList.toggle("active", tab === "bookings");
   $("#expensesTab").classList.toggle("active", tab === "expenses");
   $("#previousTab").classList.toggle("active", tab === "previous");
   $("#revenueTab").classList.toggle("active", tab === "revenue");
+  $("#fleetTab").classList.toggle("active", tab === "fleet");
   if (tab === "expenses") loadExpenses();
   if (tab === "previous") loadPreviousBookings();
   if (tab === "revenue") loadMonthlyRevenue();
+  if (tab === "fleet") renderOptionsManager();
 }
 
 async function api(path, options = {}) {
@@ -157,6 +180,46 @@ async function api(path, options = {}) {
   return result;
 }
 
+async function loadOptions() {
+  if (!state.token) return;
+  state.options = await api("/api/options");
+  renderDynamicControls();
+  renderOptionsManager();
+}
+
+function renderDynamicControls() {
+  fillSelect(bookingForm.elements.vehicle, state.options.vehicles);
+  fillSelect(bookingForm.elements.driver, state.options.drivers, "Χωρίς οδηγό");
+  fillSelect(bookingForm.elements.paymentMethod, state.options.paymentMethods);
+  fillSelect(bookingForm.elements.bookingSource, state.options.bookingSources);
+  fillSelect(expenseForm.elements.paymentMethod, state.options.paymentMethods);
+  fillSelect(expenseForm.elements.vehicle, state.options.vehicles, "Χωρίς όχημα");
+
+  const driverTabs = document.querySelector(".driver-tabs");
+  const activeDriver = state.driverFilter;
+  driverTabs.innerHTML = `<button class="driver-tab ${!activeDriver ? "active" : ""}" type="button" data-driver="">Όλοι οι οδηγοί</button>`
+    + state.options.drivers.map((driver) => `
+      <button class="driver-tab ${driver === activeDriver ? "active" : ""}" type="button" data-driver="${escapeHtml(driver)}">${escapeHtml(shortDriverName(driver))}</button>
+    `).join("");
+  driverTabs.querySelectorAll(".driver-tab").forEach((button) => {
+    button.addEventListener("click", () => setDriverFilter(button.dataset.driver || ""));
+  });
+}
+
+function fillSelect(select, values, emptyLabel = "") {
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = `${emptyLabel ? `<option value="">${escapeHtml(emptyLabel)}</option>` : ""}`
+    + values.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
+  if ([...select.options].some((option) => option.value === current)) {
+    select.value = current;
+  }
+}
+
+function shortDriverName(name) {
+  return String(name || "").trim().split(/\s+/)[0] || name;
+}
+
 async function loadBookings() {
   const q = $("#searchInput").value.trim();
   const range = currentRange();
@@ -169,6 +232,7 @@ async function loadBookings() {
     params.set("start", range.start);
     params.set("end", range.end);
   }
+  if (state.taxFilter) params.set("tax", state.taxFilter);
   const totalsParams = new URLSearchParams({ start: range.start, end: range.end });
   const [bookings] = await Promise.all([
     api(`/api/bookings?${params.toString()}`),
@@ -208,10 +272,17 @@ function renderBookings() {
               ${flightBlock(booking.flightNumber)}
               <span>${escapeHtml(booking.phone || "Χωρίς τηλέφωνο")}</span>
               <span>${booking.passengers} άτομα · ${escapeHtml(booking.vehicle)}</span>
-              <span>Πτήση/Ferry: ${escapeHtml(booking.travelTime || "-")} · Οδηγός: ${escapeHtml(booking.driver || "-")}</span>
+              <span>Πτήση/Ferry ώρα: ${escapeHtml(booking.travelTime || "-")} · Οδηγός: ${escapeHtml(booking.driver || "-")}</span>
+              <span>Πηγή: ${escapeHtml(booking.bookingSource || "PRIVATE")} · Πληρωμή: ${escapeHtml(booking.paymentMethod || "Μετρητά")} · ${paymentLabels[booking.paymentStatus] || booking.paymentStatus}</span>
+              <span>Κατάσταση: ${statusLabels[booking.status] || booking.status}</span>
+              <span>Σημειώσεις: ${escapeHtml(booking.notes || "-")}</span>
             </div>
           </div>
-          <span class="status-badge" data-status="${escapeHtml(booking.status)}">${statusLabels[booking.status] || booking.status}</span>
+          <div class="booking-badges">
+            <span class="status-badge" data-status="${escapeHtml(booking.status)}">${statusLabels[booking.status] || booking.status}</span>
+            <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}</span>
+            <button type="button" class="small-btn tax-toggle-btn" data-id="${booking.id}" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${booking.taxStatus === "Καταχωρημένο" ? "Μη καταχωρημένο" : "Καταχωρήθηκε"}</button>
+          </div>
         </div>
         <div class="booking-money">
           <span>Τιμή ${money(booking.price)}</span>
@@ -227,6 +298,12 @@ function renderBookings() {
       if (event.key === "Enter") card.click();
     });
   });
+  list.querySelectorAll(".tax-toggle-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleTaxStatus(Number(button.dataset.id), button.dataset.tax);
+    });
+  });
 }
 
 function filteredBookings() {
@@ -240,9 +317,9 @@ function calculateTotals(bookings) {
     const price = Number(booking.price || 0);
     totals.bookings += 1;
     totals.total += price;
-    if (booking.paymentMethod === "Κάρτα") {
+    if (booking.paymentMethod === "Κάρτα" || booking.paymentMethod === "Πίστωση") {
       totals.card += price;
-    } else {
+    } else if (booking.paymentMethod === "Μετρητά") {
       totals.cash += price;
     }
     return totals;
@@ -251,7 +328,10 @@ function calculateTotals(bookings) {
 
 async function loadPreviousBookings() {
   if (!state.token) return;
-  const previous = await api("/api/bookings?history=1");
+  const params = new URLSearchParams({ history: "1" });
+  const q = previousSearchInput.value.trim();
+  if (q) params.set("q", q);
+  const previous = await api(`/api/bookings?${params.toString()}`);
   state.previousBookings = previous;
   renderPreviousBookings();
 }
@@ -285,6 +365,8 @@ function renderPreviousBookings() {
             <span><b>Τιμή:</b> ${money(booking.price)}</span>
             <span><b>Τρόπος πληρωμής:</b> ${escapeHtml(booking.paymentMethod || "Μετρητά")}</span>
             <span><b>Κατάσταση πληρωμής:</b> ${paymentLabels[booking.paymentStatus] || escapeHtml(booking.paymentStatus || "-")}</span>
+            <span><b>Πηγή κράτησης:</b> ${escapeHtml(booking.bookingSource || "PRIVATE")}</span>
+            <span><b>ΑΑΔΕ:</b> ${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}</span>
             <span class="wide-info"><b>Σημειώσεις:</b> ${escapeHtml(booking.notes || "-")}</span>
             <span><b>Status:</b> Ολοκληρώθηκε</span>
           </div>
@@ -386,8 +468,10 @@ function openBooking(booking = null) {
     flightNumber: "",
     paymentStatus: "Unpaid",
     paymentMethod: "Μετρητά",
-    vehicle: "OPEL VIVARO",
+    vehicle: state.options.vehicles[0] || "OPEL VIVARO",
     driver: "",
+    bookingSource: state.options.bookingSources[0] || "PRIVATE",
+    taxStatus: "Μη Καταχωρημένο",
     status: "Pending"
   };
   Object.entries(values).forEach(([key, value]) => {
@@ -411,8 +495,10 @@ function newBookingFromPrevious(id) {
     price: 0,
     paymentStatus: "Unpaid",
     paymentMethod: previous.paymentMethod || "Μετρητά",
-    vehicle: "OPEL VIVARO",
+    vehicle: state.options.vehicles[0] || "OPEL VIVARO",
     driver: "",
+    bookingSource: previous.bookingSource || state.options.bookingSources[0] || "PRIVATE",
+    taxStatus: "Μη Καταχωρημένο",
     status: "Pending",
     notes: previous.notes || ""
   });
@@ -483,7 +569,7 @@ function renderExpenses(summary) {
           <h3>${escapeHtml(expense.category)}</h3>
           <div class="booking-details">
             <span>${escapeHtml(expense.description || "Χωρίς περιγραφή")}</span>
-            <span>${escapeHtml(expense.paymentMethod || "Μετρητά")} · ${escapeHtml(expense.notes || "Χωρίς σημειώσεις")}</span>
+            <span>${escapeHtml(expense.paymentMethod || "Μετρητά")} · Όχημα: ${escapeHtml(expense.vehicle || "-")} · ${escapeHtml(expense.notes || "Χωρίς σημειώσεις")}</span>
           </div>
         </div>
         <span class="amount-badge">${money(expense.amount)}</span>
@@ -508,7 +594,8 @@ function openExpense(expense = null) {
     date: state.date,
     category: "Καύσιμα",
     amount: 0,
-    paymentMethod: "Μετρητά"
+    paymentMethod: "Μετρητά",
+    vehicle: ""
   };
   Object.entries(values).forEach(([key, value]) => {
     if (expenseForm.elements[key]) expenseForm.elements[key].value = value ?? "";
@@ -726,6 +813,73 @@ function buildRevenuePrintHtml(month, year) {
   `;
 }
 
+async function saveOption(event, kind) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form));
+  await api(`/api/options/${kind}`, {
+    method: "POST",
+    body: JSON.stringify(data)
+  });
+  form.reset();
+  await loadOptions();
+}
+
+function renderOptionsManager() {
+  if (!$("#vehicleList")) return;
+  renderOptionList("vehicles", state.options.vehicles, $("#vehicleList"), $("#vehicleMeta"), "οχήματα");
+  renderOptionList("drivers", state.options.drivers, $("#driverList"), $("#driverMeta"), "οδηγοί");
+  renderOptionList("sources", state.options.bookingSources, $("#sourceList"), $("#sourceMeta"), "πηγές");
+}
+
+function renderOptionList(kind, items, container, meta, label) {
+  meta.textContent = `${items.length} ${label}`;
+  container.innerHTML = items.map((name) => `
+    <article class="option-row" data-kind="${kind}" data-name="${escapeHtml(name)}">
+      <input value="${escapeHtml(name)}" aria-label="Όνομα">
+      <div>
+        <button type="button" class="small-btn save-option-btn">Αποθήκευση</button>
+        <button type="button" class="small-btn danger delete-option-btn">Διαγραφή</button>
+      </div>
+    </article>
+  `).join("");
+  container.querySelectorAll(".option-row").forEach((row) => {
+    row.querySelector(".save-option-btn").addEventListener("click", () => updateOption(kind, row.dataset.name, row.querySelector("input").value));
+    row.querySelector(".delete-option-btn").addEventListener("click", () => deleteOption(kind, row.dataset.name));
+  });
+}
+
+async function updateOption(kind, oldName, newName) {
+  const id = await findOptionId(kind, oldName);
+  if (!id) return;
+  await api(`/api/options/${kind}/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ name: newName })
+  });
+  await loadOptions();
+}
+
+async function deleteOption(kind, name) {
+  if (!confirm(`Να διαγραφεί από τη λίστα: ${name};`)) return;
+  const id = await findOptionId(kind, name);
+  if (!id) return;
+  await api(`/api/options/${kind}/${id}`, { method: "DELETE" });
+  await loadOptions();
+}
+
+async function findOptionId(kind, name) {
+  return state.options.optionDetails?.[kind]?.find((item) => item.name === name)?.id;
+}
+
+async function toggleTaxStatus(id, current) {
+  const next = current === "Καταχωρημένο" ? "Μη Καταχωρημένο" : "Καταχωρημένο";
+  await api(`/api/bookings/${id}/tax-status`, {
+    method: "PUT",
+    body: JSON.stringify({ taxStatus: next })
+  });
+  loadBookings();
+}
+
 function setDriverFilter(driver) {
   state.driverFilter = driver;
   document.querySelectorAll(".driver-tab").forEach((button) => {
@@ -733,6 +887,14 @@ function setDriverFilter(driver) {
   });
   renderBookings();
   renderTotals(calculateTotals(filteredBookings()));
+}
+
+function setTaxFilter(tax) {
+  state.taxFilter = tax;
+  document.querySelectorAll(".tax-tab").forEach((button) => {
+    button.classList.toggle("active", (button.dataset.tax || "") === tax);
+  });
+  loadBookings();
 }
 
 function setViewMode(mode) {

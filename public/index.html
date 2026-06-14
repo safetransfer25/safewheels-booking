@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0f766e">
     <title>SafeWheels Kos | Κρατήσεις Transfer</title>
-    <link rel="stylesheet" href="/styles.css?v=10">
+    <link rel="stylesheet" href="/styles.css?v=11">
   </head>
   <body>
     <main id="loginScreen" class="login-screen">
@@ -37,6 +37,7 @@
         <button id="expensesTab" class="tab" type="button">Έξοδα</button>
         <button id="previousTab" class="tab" type="button">Προηγούμενες Μεταφορές <span>ΝΕΟ</span></button>
         <button id="revenueTab" class="tab" type="button">Σύνολο Εσόδων Μήνα</button>
+        <button id="fleetTab" class="tab" type="button">Οχήματα & Οδηγοί</button>
       </nav>
 
       <section id="bookingsView">
@@ -55,9 +56,12 @@
 
         <section class="driver-tabs" aria-label="Καρτέλες οδηγών">
           <button class="driver-tab active" type="button" data-driver="">Όλοι οι οδηγοί</button>
-          <button class="driver-tab" type="button" data-driver="Θεόδωρος Τσιάμης">Θεόδωρος</button>
-          <button class="driver-tab" type="button" data-driver="Γεώργιος Τσιάμης">Γεώργιος</button>
-          <button class="driver-tab" type="button" data-driver="Ιωάννης Τσιάμης">Ιωάννης</button>
+        </section>
+
+        <section class="tax-tabs" aria-label="Φίλτρο ΑΑΔΕ">
+          <button class="tax-tab active" type="button" data-tax="">Όλες</button>
+          <button class="tax-tab" type="button" data-tax="Καταχωρημένο">Καταχωρημένες</button>
+          <button class="tax-tab" type="button" data-tax="Μη Καταχωρημένο">Μη Καταχωρημένες</button>
         </section>
 
         <section class="search-row">
@@ -109,6 +113,9 @@
       </section>
 
       <section id="previousView" hidden>
+        <section class="search-row">
+          <input id="previousSearchInput" type="search" placeholder="Αναζήτηση πελάτη, τηλεφώνου, πτήσης ή διαδρομής">
+        </section>
         <section class="calendar-shell previous-shell">
           <div class="day-heading">
             <div>
@@ -145,6 +152,52 @@
           <div id="revenueMonthList" class="revenue-month-list"></div>
         </section>
       </section>
+
+      <section id="fleetView" hidden>
+        <section class="fleet-grid">
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Οχήματα</h2>
+                <p id="vehicleMeta">0 οχήματα</p>
+              </div>
+            </div>
+            <form id="vehicleForm" class="inline-form">
+              <input name="name" placeholder="Νέο όχημα" required>
+              <button type="submit">Προσθήκη</button>
+            </form>
+            <div id="vehicleList" class="option-list"></div>
+          </section>
+
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Οδηγοί</h2>
+                <p id="driverMeta">0 οδηγοί</p>
+              </div>
+            </div>
+            <form id="driverForm" class="inline-form">
+              <input name="name" placeholder="Νέος οδηγός" required>
+              <button type="submit">Προσθήκη</button>
+            </form>
+            <div id="driverList" class="option-list"></div>
+          </section>
+
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Πηγές Κράτησης</h2>
+                <p id="sourceMeta">0 πηγές</p>
+              </div>
+            </div>
+            <form id="sourceForm" class="inline-form">
+              <input name="name" placeholder="Νέα πηγή" required>
+              <button type="submit">Προσθήκη</button>
+            </form>
+            <div id="sourceList" class="option-list"></div>
+          </section>
+        </section>
+      </section>
     </main>
 
     <dialog id="bookingDialog">
@@ -165,9 +218,11 @@
           <label>Άτομα<input name="passengers" type="number" min="1" value="1"></label>
           <label>Τιμή (€)<input name="price" type="number" min="0" step="0.01" value="0"></label>
           <label>Κατάσταση πληρωμής<select name="paymentStatus"><option value="Unpaid">Απλήρωτο</option><option value="Paid">Πληρωμένο</option></select></label>
-          <label>Τρόπος Πληρωμής<select name="paymentMethod"><option>Μετρητά</option><option>Κάρτα</option></select></label>
-          <label>Όχημα<select name="vehicle"><option>OPEL VIVARO</option><option>PEUGEOT 5008</option></select></label>
-          <label>Οδηγός<select name="driver"><option value="">Χωρίς οδηγό</option><option>Θεόδωρος Τσιάμης</option><option>Γεώργιος Τσιάμης</option><option>Ιωάννης Τσιάμης</option></select></label>
+          <label>Τρόπος Πληρωμής<select name="paymentMethod"></select></label>
+          <label>Όχημα<select name="vehicle"></select></label>
+          <label>Οδηγός<select name="driver"></select></label>
+          <label>Πηγή Κράτησης<select name="bookingSource"></select></label>
+          <label>Κατάσταση ΑΑΔΕ<select name="taxStatus"><option>Μη Καταχωρημένο</option><option>Καταχωρημένο</option></select></label>
           <label>Κατάσταση<select name="status"><option value="Pending">Σε αναμονή</option><option value="Confirmed">Επιβεβαιωμένη</option><option value="Completed">Ολοκληρωμένη</option><option value="Cancelled">Ακυρωμένη</option></select></label>
           <label class="wide">Σημειώσεις<textarea name="notes" rows="2"></textarea></label>
         </div>
@@ -194,7 +249,8 @@
           <label>Κατηγορία εξόδου<input name="category" value="Καύσιμα" required></label>
           <label class="wide">Περιγραφή<input name="description" placeholder="π.χ. Πετρέλαιο OPEL VIVARO"></label>
           <label>Ποσό (€)<input name="amount" type="number" min="0" step="0.01" value="0"></label>
-          <label>Τρόπος πληρωμής<select name="paymentMethod"><option>Μετρητά</option><option>Κάρτα</option></select></label>
+          <label>Τρόπος πληρωμής<select name="paymentMethod"></select></label>
+          <label>Όχημα<select name="vehicle"></select></label>
           <label class="wide">Σημειώσεις<textarea name="notes" rows="3"></textarea></label>
         </div>
         <p id="expenseFormError" class="form-error" role="alert"></p>
@@ -209,6 +265,6 @@
     </dialog>
 
     <div id="printArea" aria-hidden="true"></div>
-    <script src="/app.js?v=10"></script>
+    <script src="/app.js?v=11"></script>
   </body>
 </html>
