@@ -48,17 +48,33 @@ def table_columns(conn, table):
     return {row["name"] for row in rows}
 
 
+def ensure_option_table(conn, table):
+    columns = table_columns(conn, table)
+    if "active" not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN active INTEGER DEFAULT 1")
+    if "createdAt" not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN createdAt TEXT")
+        conn.execute(f"UPDATE {table} SET createdAt = CURRENT_TIMESTAMP WHERE createdAt IS NULL")
+    if "updatedAt" not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN updatedAt TEXT")
+        conn.execute(f"UPDATE {table} SET updatedAt = CURRENT_TIMESTAMP WHERE updatedAt IS NULL")
+
+
 def upsert_option(conn, table, name):
     clean = str(name or "").strip()
     if not clean:
         return
-    conn.execute(
-        f"""
-        INSERT INTO {table} (name, active) VALUES (?, 1)
-        ON CONFLICT(name) DO UPDATE SET active = 1, updatedAt = CURRENT_TIMESTAMP
-        """,
+    existing = conn.execute(
+        f"SELECT rowid AS option_rowid FROM {table} WHERE name = ? COLLATE NOCASE LIMIT 1",
         (clean,),
-    )
+    ).fetchone()
+    if existing:
+        conn.execute(
+            f"UPDATE {table} SET name = ?, active = 1, updatedAt = CURRENT_TIMESTAMP WHERE rowid = ?",
+            (clean, existing["option_rowid"]),
+        )
+        return
+    conn.execute(f"INSERT INTO {table} (name, active) VALUES (?, 1)", (clean,))
 
 
 def seed_options(conn):
@@ -190,6 +206,9 @@ def init_db():
             )
             """
         )
+        ensure_option_table(conn, "vehicles")
+        ensure_option_table(conn, "drivers")
+        ensure_option_table(conn, "booking_sources")
         seed_options(conn)
 
         total = conn.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"]

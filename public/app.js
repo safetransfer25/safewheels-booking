@@ -44,6 +44,10 @@ const paymentLabels = {
   Paid: "Πληρωμένο"
 };
 
+function taxBadgeLabel(value) {
+  return value === "Καταχωρημένο" ? "Καταχωρημένο στην ΑΑΔΕ" : "Μη Καταχωρημένο στην ΑΑΔΕ";
+}
+
 init();
 
 function init() {
@@ -274,13 +278,11 @@ function renderBookings() {
               <span>${booking.passengers} άτομα · ${escapeHtml(booking.vehicle)}</span>
               <span>Πτήση/Ferry ώρα: ${escapeHtml(booking.travelTime || "-")} · Οδηγός: ${escapeHtml(booking.driver || "-")}</span>
               <span>Πηγή: ${escapeHtml(booking.bookingSource || "PRIVATE")} · Πληρωμή: ${escapeHtml(booking.paymentMethod || "Μετρητά")} · ${paymentLabels[booking.paymentStatus] || booking.paymentStatus}</span>
-              <span>Κατάσταση: ${statusLabels[booking.status] || booking.status}</span>
               <span>Σημειώσεις: ${escapeHtml(booking.notes || "-")}</span>
             </div>
           </div>
           <div class="booking-badges">
-            <span class="status-badge" data-status="${escapeHtml(booking.status)}">${statusLabels[booking.status] || booking.status}</span>
-            <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}</span>
+            <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${taxBadgeLabel(booking.taxStatus)}</span>
             <button type="button" class="small-btn tax-toggle-btn" data-id="${booking.id}" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${booking.taxStatus === "Καταχωρημένο" ? "Μη καταχωρημένο" : "Καταχωρήθηκε"}</button>
           </div>
         </div>
@@ -366,9 +368,8 @@ function renderPreviousBookings() {
             <span><b>Τρόπος πληρωμής:</b> ${escapeHtml(booking.paymentMethod || "Μετρητά")}</span>
             <span><b>Κατάσταση πληρωμής:</b> ${paymentLabels[booking.paymentStatus] || escapeHtml(booking.paymentStatus || "-")}</span>
             <span><b>Πηγή κράτησης:</b> ${escapeHtml(booking.bookingSource || "PRIVATE")}</span>
-            <span><b>ΑΑΔΕ:</b> ${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}</span>
+            <span><b>ΑΑΔΕ:</b> ${taxBadgeLabel(booking.taxStatus)}</span>
             <span class="wide-info"><b>Σημειώσεις:</b> ${escapeHtml(booking.notes || "-")}</span>
-            <span><b>Status:</b> Ολοκληρώθηκε</span>
           </div>
         </div>
         <div class="previous-money">
@@ -376,7 +377,7 @@ function renderPreviousBookings() {
           <span>${escapeHtml(booking.paymentMethod || "Μετρητά")}</span>
         </div>
         <div class="previous-actions">
-          <span class="completed-pill">Ολοκληρώθηκε</span>
+          <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${taxBadgeLabel(booking.taxStatus)}</span>
           <button type="button" class="small-btn clone-booking-btn" data-id="${booking.id}">Νέα κράτηση</button>
           <button type="button" class="small-btn ghost edit-previous-btn" data-id="${booking.id}">Επεξεργασία</button>
         </div>
