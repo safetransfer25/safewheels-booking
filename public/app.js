@@ -284,6 +284,7 @@ function renderBookings() {
           <div class="booking-badges">
             <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${taxBadgeLabel(booking.taxStatus)}</span>
             <button type="button" class="small-btn tax-toggle-btn" data-id="${booking.id}" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${booking.taxStatus === "Καταχωρημένο" ? "Μη καταχωρημένο" : "Καταχωρήθηκε"}</button>
+            <button type="button" class="small-btn complete-booking-btn" data-id="${booking.id}">Ολοκληρώθηκε</button>
           </div>
         </div>
         <div class="booking-money">
@@ -304,6 +305,12 @@ function renderBookings() {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       toggleTaxStatus(Number(button.dataset.id), button.dataset.tax);
+    });
+  });
+  list.querySelectorAll(".complete-booking-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      completeBooking(Number(button.dataset.id));
     });
   });
 }
@@ -378,6 +385,7 @@ function renderPreviousBookings() {
         </div>
         <div class="previous-actions">
           <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${taxBadgeLabel(booking.taxStatus)}</span>
+          <button type="button" class="small-btn restore-booking-btn" data-id="${booking.id}">Επαναφορά σε Επερχόμενη</button>
           <button type="button" class="small-btn clone-booking-btn" data-id="${booking.id}">Νέα κράτηση</button>
           <button type="button" class="small-btn ghost edit-previous-btn" data-id="${booking.id}">Επεξεργασία</button>
         </div>
@@ -394,6 +402,12 @@ function renderPreviousBookings() {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       openBooking(state.previousBookings.find((item) => item.id === Number(button.dataset.id)));
+    });
+  });
+  list.querySelectorAll(".restore-booking-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      restoreBooking(Number(button.dataset.id));
     });
   });
 }
@@ -879,6 +893,24 @@ async function toggleTaxStatus(id, current) {
     body: JSON.stringify({ taxStatus: next })
   });
   loadBookings();
+}
+
+async function completeBooking(id) {
+  if (!confirm("Θέλετε σίγουρα να ολοκληρώσετε αυτή τη μεταφορά;")) return;
+  await setBookingStatus(id, "Completed");
+}
+
+async function restoreBooking(id) {
+  await setBookingStatus(id, "Confirmed");
+}
+
+async function setBookingStatus(id, status) {
+  await api(`/api/bookings/${id}/status`, {
+    method: "PUT",
+    body: JSON.stringify({ status })
+  });
+  await loadBookings();
+  if (state.activeTab === "previous") await loadPreviousBookings();
 }
 
 function setDriverFilter(driver) {

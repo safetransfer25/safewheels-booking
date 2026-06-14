@@ -33,7 +33,7 @@ DEFAULT_DRIVERS = ["Θεόδωρος Τσιάμης", "Γεώργιος Τσιά
 DEFAULT_BOOKING_SOURCES = ["PRIVATE", "WELCOME", "CONNECTO"]
 PAYMENT_METHODS = {"Μετρητά", "Κάρτα", "Πίστωση"}
 TAX_STATUSES = {"Καταχωρημένο", "Μη Καταχωρημένο"}
-AUTO_COMPLETE_DELAY = timedelta(hours=1, minutes=30)
+BOOKING_STATUSES = {"Pending", "Confirmed", "Completed", "Cancelled"}
 
 
 def db():
@@ -268,7 +268,7 @@ def normalize_booking(data):
         "driver": driver,
         "bookingSource": booking_source or "PRIVATE",
         "taxStatus": tax_status if tax_status in TAX_STATUSES else "Μη Καταχωρημένο",
-        "status": str(data.get("status") or "Pending"),
+        "status": str(data.get("status") or "Pending") if str(data.get("status") or "Pending") in BOOKING_STATUSES else "Pending",
         "notes": str(data.get("notes") or "").strip(),
     }
 
@@ -304,32 +304,6 @@ def expense_error(expense):
     if expense["amount"] < 0:
         return "Το ποσό δεν μπορεί να είναι αρνητικό."
     return None
-
-
-def auto_complete_transfers(conn):
-    cutoff = datetime.now(APP_TZ) - AUTO_COMPLETE_DELAY
-    rows = conn.execute(
-        """
-        SELECT id, date, pickupTime
-        FROM bookings
-        WHERE status NOT IN ('Completed', 'Cancelled')
-        """
-    ).fetchall()
-    complete_ids = []
-    for row in rows:
-        try:
-            pickup = datetime.strptime(f"{row['date']} {row['pickupTime']}", "%Y-%m-%d %H:%M")
-            pickup = pickup.replace(tzinfo=APP_TZ)
-        except ValueError:
-            continue
-        if pickup <= cutoff:
-            complete_ids.append(row["id"])
-    if complete_ids:
-        placeholders = ",".join(["?"] * len(complete_ids))
-        conn.execute(
-            f"UPDATE bookings SET status = 'Completed', updatedAt = CURRENT_TIMESTAMP WHERE id IN ({placeholders})",
-            complete_ids,
-        )
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -384,6 +358,8 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/bookings/"):
             if parsed.path.endswith("/tax-status"):
                 return self.update_booking_tax_status(parsed)
+            if parsed.path.endswith("/status"):
+                return self.update_booking_status(parsed)
             return self.update_booking(parsed)
         if parsed.path.startswith("/api/expenses/"):
             return self.update_expense(parsed)
@@ -422,10 +398,6 @@ class Handler(SimpleHTTPRequestHandler):
         history = query.get("history", ["0"])[0] == "1"
         where = []
         params = {}
-        with db() as conn:
-            auto_complete_transfers(conn)
-        cutoff_text = (datetime.now(APP_TZ) - AUTO_COMPLETE_DELAY).strftime("%Y-%m-%d %H:%M")
-        params["cutoff"] = cutoff_text
         if query.get("date", [""])[0]:
             where.append("date = :date")
             params["date"] = query["date"][0]
@@ -440,10 +412,9 @@ class Handler(SimpleHTTPRequestHandler):
             where.append("taxStatus = :tax")
             params["tax"] = query["tax"][0]
         if history:
-            where.append("status = 'Completed' AND (date || ' ' || pickupTime) <= :cutoff")
+            where.append("status = 'Completed'")
         else:
-            where.append("status != 'Cancelled'")
-            where.append("(status != 'Completed' OR (date || ' ' || pickupTime) > :cutoff)")
+            where.append("status NOT IN ('Completed', 'Cancelled')")
         sql = "SELECT * FROM bookings"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -478,8 +449,6 @@ class Handler(SimpleHTTPRequestHandler):
         start = query.get("start", [""])[0]
         end = query.get("end", [""])[0]
         with db() as conn:
-            auto_complete_transfers(conn)
-            cutoff_text = (datetime.now(APP_TZ) - AUTO_COMPLETE_DELAY).strftime("%Y-%m-%d %H:%M")
             row = conn.execute(
                 """
                 SELECT
@@ -489,10 +458,9 @@ class Handler(SimpleHTTPRequestHandler):
                   COALESCE(SUM(price), 0) AS total
                 FROM bookings
                 WHERE date BETWEEN ? AND ?
-                  AND status != 'Cancelled'
-                  AND (status != 'Completed' OR (date || ' ' || pickupTime) > ?)
+                  AND status NOT IN ('Completed', 'Cancelled')
                 """,
-                (start, end, cutoff_text),
+                (start, end),
             ).fetchone()
         return self.send_json(row_to_dict(row))
 
@@ -579,7 +547,6 @@ class Handler(SimpleHTTPRequestHandler):
         months = []
         season = {"cash": 0, "card": 0, "total": 0, "expenses": 0, "net": 0}
         with db() as conn:
-            auto_complete_transfers(conn)
             for month_num, month_name in SEASON_MONTHS:
                 start = date(year, month_num, 1)
                 next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -763,6 +730,23 @@ class Handler(SimpleHTTPRequestHandler):
             cur = conn.execute(
                 "UPDATE bookings SET taxStatus = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
                 (tax_status, booking_id),
+            )
+            if cur.rowcount == 0:
+                return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
+            saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        return self.send_json(row_to_dict(saved))
+
+    def update_booking_status(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        booking_id = parsed.path.strip("/").split("/")[-2]
+        status = str(self.read_json().get("status") or "").strip()
+        if status not in BOOKING_STATUSES:
+            return self.send_json({"error": "Λάθος κατάσταση κράτησης."}, 400)
+        with db() as conn:
+            cur = conn.execute(
+                "UPDATE bookings SET status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, booking_id),
             )
             if cur.rowcount == 0:
                 return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
