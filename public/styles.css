@@ -330,6 +330,40 @@ textarea { resize: vertical; }
   color: var(--muted);
   font-size: 14px;
 }
+.booking-debug {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  color: #374151;
+  font-size: 12px;
+}
+.booking-debug span {
+  border: 1px dashed #94a3b8;
+  border-radius: 4px;
+  background: #f8fafc;
+  padding: 4px 6px;
+}
+.admin-debug-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.admin-debug-grid div {
+  background: var(--panel);
+  padding: 12px;
+}
+.admin-debug-grid span {
+  display: block;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 850;
+}
+.admin-debug-grid small {
+  color: var(--muted);
+  font-size: 12px;
+}
 .route-chip, .flight-chip {
   display: inline-flex;
   align-items: center;
@@ -746,12 +780,12 @@ dialog footer div {
   }
   .print-revenue-table th:nth-child(1) { width: 12%; }
   .print-revenue-table th:nth-child(2) { width: 8%; }
-  .print-revenue-table th:nth-child(3) { width: 20%; }
-  .print-revenue-table th:nth-child(4) { width: 16%; }
+  .print-revenue-table th:nth-child(3) { width: 18%; }
+  .print-revenue-table th:nth-child(4) { width: 14%; }
   .print-revenue-table th:nth-child(5),
   .print-revenue-table th:nth-child(6),
   .print-revenue-table th:nth-child(7) { width: 10%; }
-  .print-revenue-table th:nth-child(8) { width: 14%; }
+  .print-revenue-table th:nth-child(8) { width: 18%; }
   .print-totals {
     display: grid;
     grid-template-columns: repeat(5, 1fr);

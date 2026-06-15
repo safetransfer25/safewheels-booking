@@ -1,6 +1,6 @@
 const state = {
   token: localStorage.getItem("safewheelsToken"),
-  date: new Date().toISOString().slice(0, 10),
+  date: localDateIso(),
   viewMode: "day",
   driverFilter: "",
   taxFilter: "",
@@ -8,6 +8,7 @@ const state = {
   bookings: [],
   previousBookings: [],
   monthlyRevenue: null,
+  adminDebug: null,
   expenses: [],
   options: {
     vehicles: ["OPEL VIVARO", "PEUGEOT 5008"],
@@ -68,7 +69,7 @@ function bindEvents() {
   $("#fleetTab").addEventListener("click", () => switchTab("fleet"));
   $("#prevDay").addEventListener("click", () => changeDay(-1));
   $("#nextDay").addEventListener("click", () => changeDay(1));
-  $("#todayBtn").addEventListener("click", () => setDate(new Date().toISOString().slice(0, 10)));
+  $("#todayBtn").addEventListener("click", () => setDate(localDateIso()));
   selectedDate.addEventListener("change", () => setDate(selectedDate.value));
   $("#dailyPlanBtn").addEventListener("click", () => setViewMode("day"));
   $("#weeklyPlanBtn").addEventListener("click", () => setViewMode("week"));
@@ -88,6 +89,7 @@ function bindEvents() {
   $("#printBtn").addEventListener("click", () => window.print());
   $("#refreshPreviousBtn").addEventListener("click", loadPreviousBookings);
   $("#refreshRevenueBtn").addEventListener("click", loadMonthlyRevenue);
+  $("#refreshAdminDebugBtn").addEventListener("click", loadAdminDebug);
   revenueYear.addEventListener("change", loadMonthlyRevenue);
   bookingForm.addEventListener("submit", saveBooking);
   bookingForm.querySelectorAll(".time-entry").forEach((input) => bindTimeEntry(input));
@@ -162,7 +164,10 @@ function switchTab(tab) {
   if (tab === "expenses") loadExpenses();
   if (tab === "previous") loadPreviousBookings();
   if (tab === "revenue") loadMonthlyRevenue();
-  if (tab === "fleet") renderOptionsManager();
+  if (tab === "fleet") {
+    renderOptionsManager();
+    loadAdminDebug();
+  }
 }
 
 async function api(path, options = {}) {
@@ -189,6 +194,7 @@ async function loadOptions() {
   state.options = await api("/api/options");
   renderDynamicControls();
   renderOptionsManager();
+  renderAdminDebug();
 }
 
 function renderDynamicControls() {
@@ -228,14 +234,13 @@ async function loadBookings() {
   const q = $("#searchInput").value.trim();
   const range = currentRange();
   const params = new URLSearchParams();
-  if (q) {
-    params.set("q", q);
-  } else if (state.viewMode === "day") {
+  if (state.viewMode === "day") {
     params.set("date", state.date);
   } else {
     params.set("start", range.start);
     params.set("end", range.end);
   }
+  if (q) params.set("q", q);
   if (state.taxFilter) params.set("tax", state.taxFilter);
   const totalsParams = new URLSearchParams({ start: range.start, end: range.end });
   const [bookings] = await Promise.all([
@@ -246,6 +251,40 @@ async function loadBookings() {
   renderBookings();
   renderTotals(calculateTotals(filteredBookings()));
   if (state.activeTab === "previous") loadPreviousBookings();
+  if (state.activeTab === "fleet") loadAdminDebug();
+}
+
+async function loadAdminDebug() {
+  if (!state.token) return;
+  const range = currentRange();
+  const params = new URLSearchParams({ start: range.start, end: range.end });
+  const q = $("#searchInput").value.trim();
+  if (q) params.set("q", q);
+  if (state.taxFilter) params.set("tax", state.taxFilter);
+  if (state.driverFilter) params.set("driver", state.driverFilter);
+  state.adminDebug = await api(`/api/admin/debug?${params.toString()}`);
+  renderAdminDebug();
+}
+
+function renderAdminDebug() {
+  const panel = $("#adminDebugPanel");
+  if (!panel) return;
+  const data = state.adminDebug;
+  if (!data) {
+    $("#adminDebugMeta").textContent = "Δεν έχει φορτωθεί";
+    panel.innerHTML = `<div class="empty">Πατήστε Ανανέωση για διαγνωστικό έλεγχο.</div>`;
+    return;
+  }
+  $("#adminDebugMeta").textContent = `${data.databaseRowsCount} γραμμές βάσης`;
+  panel.innerHTML = `
+    <div><span>${data.totalBookings}</span><small>Total bookings</small></div>
+    <div><span>${data.upcoming}</span><small>Upcoming</small></div>
+    <div><span>${data.completed}</span><small>Completed</small></div>
+    <div><span>${data.cancelled}</span><small>Cancelled</small></div>
+    <div><span>${data.hiddenByFilters}</span><small>Hidden by filters</small></div>
+    <div><span>${data.databaseRowsCount}</span><small>Database rows count</small></div>
+    <div><span>${data.auditRowsCount}</span><small>Audit rows</small></div>
+  `;
 }
 
 function renderBookings() {
@@ -280,6 +319,7 @@ function renderBookings() {
               <span>Πηγή: ${escapeHtml(booking.bookingSource || "PRIVATE")} · Πληρωμή: ${escapeHtml(booking.paymentMethod || "Μετρητά")} · ${paymentLabels[booking.paymentStatus] || booking.paymentStatus}</span>
               <span>Σημειώσεις: ${escapeHtml(booking.notes || "-")}</span>
             </div>
+            ${bookingDebugBlock(booking)}
           </div>
           <div class="booking-badges">
             <span class="tax-badge" data-tax="${escapeHtml(booking.taxStatus || "Μη Καταχωρημένο")}">${taxBadgeLabel(booking.taxStatus)}</span>
@@ -318,6 +358,21 @@ function renderBookings() {
 function filteredBookings() {
   if (!state.driverFilter) return state.bookings;
   return state.bookings.filter((booking) => booking.driver === state.driverFilter);
+}
+
+function bookingDebugBlock(booking) {
+  return `
+    <div class="booking-debug">
+      <span>ID: ${escapeHtml(booking.id)}</span>
+      <span>Ημ/νία DB: ${escapeHtml(booking.date || "-")}</span>
+      <span>Ώρα DB: ${escapeHtml(booking.pickupTime || "-")}</span>
+      <span>Status: ${escapeHtml(booking.status || "-")}</span>
+      <span>Οδηγός: ${escapeHtml(booking.driver || "-")}</span>
+      <span>Όχημα: ${escapeHtml(booking.vehicle || "-")}</span>
+      <span>Πληρωμή: ${escapeHtml(booking.paymentMethod || "-")} / ${escapeHtml(paymentLabels[booking.paymentStatus] || booking.paymentStatus || "-")}</span>
+      <span>Πηγή: ${escapeHtml(booking.bookingSource || "PRIVATE")}</span>
+    </div>
+  `;
 }
 
 function calculateTotals(bookings) {
@@ -492,7 +547,14 @@ function openBooking(booking = null) {
   Object.entries(values).forEach(([key, value]) => {
     if (bookingForm.elements[key]) bookingForm.elements[key].value = value ?? "";
   });
+  syncBookingStatusControl(booking);
   bookingDialog.showModal();
+}
+
+function syncBookingStatusControl(booking) {
+  const statusSelect = bookingForm.elements.status;
+  const completedOption = [...statusSelect.options].find((option) => option.value === "Completed");
+  if (completedOption) completedOption.disabled = booking?.status !== "Completed";
 }
 
 function newBookingFromPrevious(id) {
@@ -507,11 +569,12 @@ function newBookingFromPrevious(id) {
     phone: previous.phone || "",
     route: previous.route || "",
     passengers: previous.passengers || 1,
-    price: 0,
+    luggage: previous.luggage || 0,
+    price: previous.price || 0,
     paymentStatus: "Unpaid",
     paymentMethod: previous.paymentMethod || "Μετρητά",
-    vehicle: state.options.vehicles[0] || "OPEL VIVARO",
-    driver: "",
+    vehicle: previous.vehicle || state.options.vehicles[0] || "OPEL VIVARO",
+    driver: previous.driver || "",
     bookingSource: previous.bookingSource || state.options.bookingSources[0] || "PRIVATE",
     taxStatus: "Μη Καταχωρημένο",
     status: "Pending",
@@ -941,7 +1004,7 @@ function setViewMode(mode) {
 function changeDay(offset) {
   const current = new Date(`${state.date}T12:00:00`);
   current.setDate(current.getDate() + offset);
-  setDate(current.toISOString().slice(0, 10));
+  setDate(localDateIso(current));
 }
 
 function setDate(date) {
@@ -979,6 +1042,11 @@ function currentRange() {
     end: state.date,
     title: formatDate(state.date)
   };
+}
+
+function localDateIso(date = new Date()) {
+  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+  return toIso(local);
 }
 
 function toIso(date) {

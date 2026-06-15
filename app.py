@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import shutil
 import secrets
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -11,6 +13,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).parent
 PUBLIC = ROOT / "public"
 DB_PATH = Path(os.environ.get("SAFEWHEELS_DB", ROOT / "safewheels.sqlite"))
+BACKUP_DIR = Path(os.environ.get("SAFEWHEELS_BACKUP_DIR", DB_PATH.parent / "backups"))
+MAX_BACKUPS = 20
 PORT = int(os.environ.get("PORT", "4173"))
 SESSIONS = set()
 LOGIN_USERNAME = os.environ.get("SAFEWHEELS_USERNAME", "admin")
@@ -107,6 +111,7 @@ def active_option_rows(conn, table):
 
 
 def init_db():
+    backup_database("schema-change")
     with db() as conn:
         conn.execute(
             """
@@ -152,6 +157,7 @@ def init_db():
         conn.execute("UPDATE bookings SET paymentMethod = 'Μετρητά' WHERE paymentMethod IS NULL OR paymentMethod = ''")
         conn.execute("UPDATE bookings SET bookingSource = 'PRIVATE' WHERE bookingSource IS NULL OR bookingSource = ''")
         conn.execute("UPDATE bookings SET taxStatus = 'Μη Καταχωρημένο' WHERE taxStatus IS NULL OR taxStatus = ''")
+        repair_booking_dates(conn)
 
         conn.execute(
             """
@@ -206,10 +212,29 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS booking_audit_log (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              bookingId INTEGER NOT NULL,
+              action TEXT NOT NULL,
+              loggedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+              createdAt TEXT,
+              updatedAt TEXT,
+              status TEXT,
+              driver TEXT,
+              vehicle TEXT,
+              paymentMethod TEXT,
+              taxStatus TEXT,
+              snapshot TEXT
+            )
+            """
+        )
         ensure_option_table(conn, "vehicles")
         ensure_option_table(conn, "drivers")
         ensure_option_table(conn, "booking_sources")
         seed_options(conn)
+        ensure_booking_audit_baseline(conn)
 
         total = conn.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"]
         if total or not SEED_DEMO_DATA:
@@ -233,8 +258,156 @@ def row_to_dict(row):
     return dict(row) if row else None
 
 
+def utc_timestamp():
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def backup_database(reason):
+    if not DB_PATH.exists():
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(APP_TZ).strftime("%Y_%m_%d_%H%M")
+    backup_path = BACKUP_DIR / f"safewheels_backup_{timestamp}.db"
+    suffix = 1
+    while backup_path.exists():
+        backup_path = BACKUP_DIR / f"safewheels_backup_{timestamp}_{suffix:02d}.db"
+        suffix += 1
+    shutil.copy2(DB_PATH, backup_path)
+    prune_backups()
+    return backup_path
+
+
+def prune_backups():
+    backups = sorted(
+        BACKUP_DIR.glob("safewheels_backup_*.db"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for old_backup in backups[MAX_BACKUPS:]:
+        old_backup.unlink(missing_ok=True)
+
+
+def audit_booking(conn, booking_id, action):
+    row = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+    if not row:
+        return
+    conn.execute(
+        """
+        INSERT INTO booking_audit_log
+        (bookingId, action, createdAt, updatedAt, status, driver, vehicle, paymentMethod, taxStatus, snapshot)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            row["id"],
+            action,
+            row["createdAt"],
+            row["updatedAt"],
+            row["status"],
+            row["driver"],
+            row["vehicle"],
+            row["paymentMethod"],
+            row["taxStatus"],
+            json.dumps(row_to_dict(row), ensure_ascii=False),
+        ),
+    )
+
+
+def ensure_booking_audit_baseline(conn):
+    rows = conn.execute(
+        """
+        SELECT id
+        FROM bookings
+        WHERE id NOT IN (SELECT DISTINCT bookingId FROM booking_audit_log)
+        """
+    ).fetchall()
+    for row in rows:
+        audit_booking(conn, row["id"], "baseline")
+
+
 def parse_date(value):
     return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def app_today():
+    return datetime.now(APP_TZ).date()
+
+
+def normalize_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return ""
+    match = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2}|\d{4}))?", raw)
+    if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        year_value = match.group(3)
+        year = app_today().year if not year_value else int(year_value)
+        if year < 100:
+            year += 2000
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError:
+            return ""
+    return ""
+
+
+def normalize_time(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", raw)
+    if match:
+        return f"{int(match.group(1)):02d}:{match.group(2)}"
+    match = re.fullmatch(r"(\d{1,2})([0-5]\d)", raw)
+    if match and int(match.group(1)) <= 23:
+        return f"{int(match.group(1)):02d}:{match.group(2)}"
+    return raw
+
+
+def normalize_number(value, default=0):
+    raw = str(value if value is not None else "").strip().replace(",", ".")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def normalize_int(value, default=0):
+    try:
+        return int(normalize_number(value, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def repair_booking_dates(conn):
+    rows = conn.execute("SELECT id, date, pickupTime, travelTime, status FROM bookings").fetchall()
+    for row in rows:
+        fixed_date = normalize_date(row["date"])
+        fixed_pickup = normalize_time(row["pickupTime"])
+        fixed_travel = normalize_time(row["travelTime"])
+        fixed_status = row["status"] if row["status"] in BOOKING_STATUSES else "Pending"
+        updates = {}
+        if fixed_date and fixed_date != row["date"]:
+            updates["date"] = fixed_date
+        if fixed_pickup and fixed_pickup != row["pickupTime"]:
+            updates["pickupTime"] = fixed_pickup
+        if fixed_travel != (row["travelTime"] or ""):
+            updates["travelTime"] = fixed_travel
+        if fixed_status != row["status"]:
+            updates["status"] = fixed_status
+        if updates:
+            assignments = ", ".join([f"{key}=:{key}" for key in updates])
+            conn.execute(
+                f"UPDATE bookings SET {assignments}, updatedAt=CURRENT_TIMESTAMP WHERE id=:id",
+                {**updates, "id": row["id"]},
+            )
 
 
 def month_bounds(month):
@@ -244,23 +417,24 @@ def month_bounds(month):
 
 
 def normalize_booking(data):
-    price = float(data.get("price") or 0)
+    price = normalize_number(data.get("price"), 0)
     vehicle = str(data.get("vehicle") or "OPEL VIVARO")
     driver = str(data.get("driver") or "").strip()
     payment_method = str(data.get("paymentMethod") or "Μετρητά")
     booking_source = str(data.get("bookingSource") or "PRIVATE").strip().upper()
     tax_status = str(data.get("taxStatus") or "Μη Καταχωρημένο").strip()
+    status = str(data.get("status") or "Pending").strip()
     return {
-        "date": str(data.get("date") or "")[:10],
-        "pickupTime": str(data.get("pickupTime") or ""),
-        "travelTime": str(data.get("travelTime") or ""),
+        "date": normalize_date(data.get("date")),
+        "pickupTime": normalize_time(data.get("pickupTime")),
+        "travelTime": normalize_time(data.get("travelTime")),
         "flightNumber": str(data.get("flightNumber") or "").strip().upper(),
         "customerName": str(data.get("customerName") or "").strip(),
         "phone": str(data.get("phone") or "").strip(),
         "hotel": str(data.get("hotel") or "").strip(),
         "route": str(data.get("route") or "").strip(),
-        "passengers": int(data.get("passengers") or 1),
-        "luggage": int(data.get("luggage") or 0),
+        "passengers": normalize_int(data.get("passengers"), 1),
+        "luggage": normalize_int(data.get("luggage"), 0),
         "price": price,
         "paymentStatus": str(data.get("paymentStatus") or "Unpaid"),
         "paymentMethod": payment_method if payment_method in PAYMENT_METHODS else "Μετρητά",
@@ -268,7 +442,7 @@ def normalize_booking(data):
         "driver": driver,
         "bookingSource": booking_source or "PRIVATE",
         "taxStatus": tax_status if tax_status in TAX_STATUSES else "Μη Καταχωρημένο",
-        "status": str(data.get("status") or "Pending") if str(data.get("status") or "Pending") in BOOKING_STATUSES else "Pending",
+        "status": status if status in BOOKING_STATUSES else "Pending",
         "notes": str(data.get("notes") or "").strip(),
     }
 
@@ -276,10 +450,10 @@ def normalize_booking(data):
 def normalize_expense(data):
     payment_method = str(data.get("paymentMethod") or "Μετρητά")
     return {
-        "date": str(data.get("date") or "")[:10],
+        "date": normalize_date(data.get("date")),
         "category": str(data.get("category") or "Καύσιμα").strip(),
         "description": str(data.get("description") or "").strip(),
-        "amount": float(data.get("amount") or 0),
+        "amount": normalize_number(data.get("amount"), 0),
         "paymentMethod": payment_method if payment_method in PAYMENT_METHODS else "Μετρητά",
         "vehicle": str(data.get("vehicle") or "").strip(),
         "notes": str(data.get("notes") or "").strip(),
@@ -288,7 +462,7 @@ def normalize_expense(data):
 
 def booking_error(booking):
     if not booking["date"]:
-        return "Η ημερομηνία είναι υποχρεωτική."
+        return "Η ημερομηνία είναι υποχρεωτική και πρέπει να είναι σε μορφή YYYY-MM-DD ή ΗΗ/ΜΜ/ΕΕΕΕ."
     if not booking["pickupTime"]:
         return "Η ώρα παραλαβής είναι υποχρεωτική."
     if not booking["customerName"]:
@@ -349,6 +523,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.monthly_revenue(parsed)
         if parsed.path == "/api/options":
             return self.options()
+        if parsed.path == "/api/admin/debug":
+            return self.admin_debug(parsed)
         if parsed.path.startswith("/api/"):
             return self.send_error(404)
         return super().do_GET()
@@ -381,14 +557,18 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.authorized():
             return self.send_json({"error": "Unauthorized"}, 401)
         booking = normalize_booking(self.read_json())
+        if booking["status"] == "Completed":
+            booking["status"] = "Pending"
         error = booking_error(booking)
         if error:
             return self.send_json({"error": error}, 400)
         keys = ", ".join(booking.keys())
         placeholders = ", ".join([f":{key}" for key in booking])
+        backup_database("booking-create")
         with db() as conn:
             cur = conn.execute(f"INSERT INTO bookings ({keys}) VALUES ({placeholders})", booking)
             saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (cur.lastrowid,)).fetchone()
+            audit_booking(conn, cur.lastrowid, "created")
         return self.send_json(row_to_dict(saved), 201)
 
     def list_bookings(self, parsed):
@@ -398,13 +578,16 @@ class Handler(SimpleHTTPRequestHandler):
         history = query.get("history", ["0"])[0] == "1"
         where = []
         params = {}
+        has_date_filter = False
         if query.get("date", [""])[0]:
             where.append("date = :date")
-            params["date"] = query["date"][0]
+            params["date"] = normalize_date(query["date"][0])
+            has_date_filter = True
         if query.get("start", [""])[0] and query.get("end", [""])[0]:
             where.append("date BETWEEN :start AND :end")
-            params["start"] = query["start"][0]
-            params["end"] = query["end"][0]
+            params["start"] = normalize_date(query["start"][0])
+            params["end"] = normalize_date(query["end"][0])
+            has_date_filter = True
         if query.get("q", [""])[0]:
             where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
             params["q"] = f"%{query['q'][0]}%"
@@ -415,6 +598,9 @@ class Handler(SimpleHTTPRequestHandler):
             where.append("status = 'Completed'")
         else:
             where.append("status NOT IN ('Completed', 'Cancelled')")
+            if not has_date_filter:
+                where.append("date >= :today")
+                params["today"] = app_today().isoformat()
         sql = "SELECT * FROM bookings"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -432,7 +618,13 @@ class Handler(SimpleHTTPRequestHandler):
         if error:
             return self.send_json({"error": error}, 400)
         assignments = ", ".join([f"{key}=:{key}" for key in booking])
+        backup_database("booking-update")
         with db() as conn:
+            existing = conn.execute("SELECT status FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            if not existing:
+                return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
+            if booking["status"] == "Completed" and existing["status"] != "Completed":
+                booking["status"] = existing["status"] if existing["status"] in BOOKING_STATUSES else "Pending"
             cur = conn.execute(
                 f"UPDATE bookings SET {assignments}, updatedAt=CURRENT_TIMESTAMP WHERE id=:id",
                 {**booking, "id": booking_id},
@@ -440,14 +632,15 @@ class Handler(SimpleHTTPRequestHandler):
             if cur.rowcount == 0:
                 return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
             saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            audit_booking(conn, booking_id, "updated")
         return self.send_json(row_to_dict(saved))
 
     def totals(self, parsed):
         if not self.authorized():
             return self.send_json({"error": "Unauthorized"}, 401)
         query = parse_qs(parsed.query)
-        start = query.get("start", [""])[0]
-        end = query.get("end", [""])[0]
+        start = normalize_date(query.get("start", [""])[0])
+        end = normalize_date(query.get("end", [""])[0])
         with db() as conn:
             row = conn.execute(
                 """
@@ -473,6 +666,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": error}, 400)
         keys = ", ".join(expense.keys())
         placeholders = ", ".join([f":{key}" for key in expense])
+        backup_database("expense-create")
         with db() as conn:
             cur = conn.execute(f"INSERT INTO expenses ({keys}) VALUES ({placeholders})", expense)
             saved = conn.execute("SELECT * FROM expenses WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -500,6 +694,7 @@ class Handler(SimpleHTTPRequestHandler):
         if error:
             return self.send_json({"error": error}, 400)
         assignments = ", ".join([f"{key}=:{key}" for key in expense])
+        backup_database("expense-update")
         with db() as conn:
             cur = conn.execute(
                 f"UPDATE expenses SET {assignments}, updatedAt=CURRENT_TIMESTAMP WHERE id=:id",
@@ -596,7 +791,7 @@ class Handler(SimpleHTTPRequestHandler):
                         "cash": price if is_cash else 0,
                         "card": price if is_card else 0,
                         "expenses": 0,
-                        "description": f"Πίστωση: {price:.2f} €" if is_credit else "",
+                        "description": "Πίστωση" if is_credit else "",
                     })
                 for expense in expenses:
                     amount = float(expense["amount"] or 0)
@@ -669,6 +864,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": "Το όνομα είναι υποχρεωτικό."}, 400)
         if kind == "sources":
             name = name.upper()
+        backup_database(f"option-create-{kind}")
         with db() as conn:
             upsert_option(conn, table, name)
             saved = conn.execute(f"SELECT * FROM {table} WHERE name = ?", (name,)).fetchone()
@@ -689,6 +885,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"error": "Το όνομα είναι υποχρεωτικό."}, 400)
         if kind == "sources":
             name = name.upper()
+        backup_database(f"option-update-{kind}")
         with db() as conn:
             cur = conn.execute(
                 f"UPDATE {table} SET name = ?, active = 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
@@ -709,6 +906,7 @@ class Handler(SimpleHTTPRequestHandler):
         table = self.option_table(kind)
         if not table:
             return self.send_json({"error": "Άγνωστη επιλογή."}, 404)
+        backup_database(f"option-delete-{kind}")
         with db() as conn:
             cur = conn.execute(
                 f"UPDATE {table} SET active = 0, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
@@ -726,6 +924,7 @@ class Handler(SimpleHTTPRequestHandler):
         tax_status = str(self.read_json().get("taxStatus") or "").strip()
         if tax_status not in TAX_STATUSES:
             return self.send_json({"error": "Λάθος κατάσταση ΑΑΔΕ."}, 400)
+        backup_database("booking-tax-status")
         with db() as conn:
             cur = conn.execute(
                 "UPDATE bookings SET taxStatus = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
@@ -734,6 +933,7 @@ class Handler(SimpleHTTPRequestHandler):
             if cur.rowcount == 0:
                 return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
             saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            audit_booking(conn, booking_id, "tax_status_updated")
         return self.send_json(row_to_dict(saved))
 
     def update_booking_status(self, parsed):
@@ -743,6 +943,7 @@ class Handler(SimpleHTTPRequestHandler):
         status = str(self.read_json().get("status") or "").strip()
         if status not in BOOKING_STATUSES:
             return self.send_json({"error": "Λάθος κατάσταση κράτησης."}, 400)
+        backup_database("booking-status")
         with db() as conn:
             cur = conn.execute(
                 "UPDATE bookings SET status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?",
@@ -751,13 +952,65 @@ class Handler(SimpleHTTPRequestHandler):
             if cur.rowcount == 0:
                 return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
             saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+            audit_booking(conn, booking_id, "status_updated")
         return self.send_json(row_to_dict(saved))
+
+    def admin_debug(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        query = parse_qs(parsed.query)
+        today = app_today().isoformat()
+        start = normalize_date(query.get("start", [""])[0]) or today
+        end = normalize_date(query.get("end", [""])[0]) or "9999-12-31"
+        q = query.get("q", [""])[0].strip()
+        tax = query.get("tax", [""])[0]
+        driver = query.get("driver", [""])[0].strip()
+        visible_where = ["date BETWEEN :start AND :end", "status NOT IN ('Completed', 'Cancelled')"]
+        active_range_where = list(visible_where)
+        params = {"start": start, "end": end}
+        if q:
+            visible_where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
+            params["q"] = f"%{q}%"
+        if tax in TAX_STATUSES:
+            visible_where.append("taxStatus = :tax")
+            params["tax"] = tax
+        if driver:
+            visible_where.append("driver = :driver")
+            params["driver"] = driver
+        visible_sql = "SELECT COUNT(*) AS total FROM bookings WHERE " + " AND ".join(visible_where)
+        active_range_sql = "SELECT COUNT(*) AS total FROM bookings WHERE " + " AND ".join(active_range_where)
+        with db() as conn:
+            db_rows = conn.execute("SELECT COUNT(*) AS total FROM bookings").fetchone()["total"]
+            upcoming = conn.execute(
+                "SELECT COUNT(*) AS total FROM bookings WHERE date >= ? AND status NOT IN ('Completed', 'Cancelled')",
+                (today,),
+            ).fetchone()["total"]
+            completed = conn.execute("SELECT COUNT(*) AS total FROM bookings WHERE status = 'Completed'").fetchone()["total"]
+            cancelled = conn.execute("SELECT COUNT(*) AS total FROM bookings WHERE status = 'Cancelled'").fetchone()["total"]
+            active_in_range = conn.execute(active_range_sql, {"start": start, "end": end}).fetchone()["total"]
+            visible = conn.execute(visible_sql, params).fetchone()["total"]
+            audit_rows = conn.execute("SELECT COUNT(*) AS total FROM booking_audit_log").fetchone()["total"]
+        return self.send_json({
+            "totalBookings": db_rows,
+            "upcoming": upcoming,
+            "completed": completed,
+            "cancelled": cancelled,
+            "activeInCurrentRange": active_in_range,
+            "visibleWithCurrentFilters": visible,
+            "hiddenByFilters": max(active_in_range - visible, 0),
+            "databaseRowsCount": db_rows,
+            "auditRowsCount": audit_rows,
+            "range": {"start": start, "end": end},
+        })
 
     def delete_row(self, table, parsed):
         if not self.authorized():
             return self.send_json({"error": "Unauthorized"}, 401)
         item_id = parsed.path.rsplit("/", 1)[-1]
+        backup_database(f"{table}-delete")
         with db() as conn:
+            if table == "bookings":
+                audit_booking(conn, item_id, "deleted")
             cur = conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
         if cur.rowcount == 0:
             return self.send_json({"error": "Δεν βρέθηκε η εγγραφή."}, 404)
