@@ -1010,6 +1010,7 @@ class Handler(SimpleHTTPRequestHandler):
         backup_database(f"{table}-delete")
         with db() as conn:
             if table == "bookings":
+                # Store full snapshot in audit log before permanent deletion
                 audit_booking(conn, item_id, "deleted")
             cur = conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
         if cur.rowcount == 0:
