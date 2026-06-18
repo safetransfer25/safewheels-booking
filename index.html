@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="el">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f766e">
+    <title>SafeWheels Kos | Κρατήσεις Transfer</title>
+    <link rel="stylesheet" href="/styles.css?v=11">
+  </head>
+  <body>
+    <main id="loginScreen" class="login-screen">
+      <section class="login-panel">
+        <div>
+          <p class="eyebrow">SafeWheels Kos</p>
+          <h1>Ημερολόγιο Transfer</h1>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>Χρήστης<input name="username" autocomplete="username" value="admin" required></label>
+          <label>Κωδικός<input name="password" type="password" autocomplete="current-password" value="Safe2026&&&" required></label>
+          <button id="loginButton" type="submit">Σύνδεση</button>
+          <p id="loginError" class="form-error" role="alert"></p>
+        </form>
+      </section>
+    </main>
+
+    <main id="app" class="app" hidden>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">SafeWheels Kos</p>
+          <h1>Κρατήσεις Transfer</h1>
+        </div>
+        <button id="logoutBtn" class="ghost">Έξοδος</button>
+      </header>
+
+      <nav class="tabs" aria-label="Κεντρικές καρτέλες">
+        <button id="bookingsTab" class="tab active" type="button">Κρατήσεις</button>
+        <button id="expensesTab" class="tab" type="button">Έξοδα</button>
+        <button id="previousTab" class="tab" type="button">Προηγούμενες Μεταφορές <span>ΝΕΟ</span></button>
+        <button id="revenueTab" class="tab" type="button">Σύνολο Εσόδων Μήνα</button>
+        <button id="fleetTab" class="tab" type="button">Οχήματα & Οδηγοί</button>
+      </nav>
+
+      <section id="bookingsView">
+        <section class="controls">
+          <label class="date-control">Ημερομηνία<input id="selectedDate" type="date"></label>
+          <button id="prevDay" class="icon-btn" aria-label="Προηγούμενη ημέρα">‹</button>
+          <button id="todayBtn">Σήμερα</button>
+          <button id="nextDay" class="icon-btn" aria-label="Επόμενη ημέρα">›</button>
+        </section>
+
+        <section class="view-actions">
+          <button id="dailyPlanBtn" class="ghost active" type="button">Ημερήσιο Πλάνο</button>
+          <button id="weeklyPlanBtn" class="ghost" type="button">Εβδομαδιαίο Πλάνο</button>
+          <button id="monthlyPlanBtn" class="ghost" type="button">Μηνιαίο Πλάνο</button>
+        </section>
+
+        <section class="driver-tabs" aria-label="Καρτέλες οδηγών">
+          <button class="driver-tab active" type="button" data-driver="">Όλοι οι οδηγοί</button>
+        </section>
+
+        <section class="tax-tabs" aria-label="Φίλτρο ΑΑΔΕ">
+          <button class="tax-tab active" type="button" data-tax="">Όλες</button>
+          <button class="tax-tab" type="button" data-tax="Καταχωρημένο">Καταχωρημένες</button>
+          <button class="tax-tab" type="button" data-tax="Μη Καταχωρημένο">Μη Καταχωρημένες</button>
+        </section>
+
+        <section class="search-row">
+          <input id="searchInput" type="search" placeholder="Αναζήτηση πελάτη, τηλεφώνου ή ημερομηνίας">
+          <button id="addBookingBtn">Νέα κράτηση</button>
+        </section>
+
+        <section class="summary-strip">
+          <div><span id="bookingCount">0</span><small>κρατήσεις</small></div>
+          <div><span id="cashTotal">0,00 €</span><small>Σύνολο Μετρητών</small></div>
+          <div><span id="cardTotal">0,00 €</span><small>Σύνολο Κάρτας</small></div>
+          <div><span id="grandTotal">0,00 €</span><small>Γενικό Σύνολο</small></div>
+        </section>
+
+        <section class="calendar-shell">
+          <div class="day-heading">
+            <div>
+              <h2 id="planTitle">Σήμερα</h2>
+              <p id="planMeta">0 transfer</p>
+            </div>
+            <button id="printBtn">Εξαγωγή / Εκτύπωση</button>
+          </div>
+          <div id="bookingList" class="booking-list"></div>
+        </section>
+      </section>
+
+      <section id="expensesView" hidden>
+        <section class="controls expense-controls">
+          <label>Μήνας<input id="expenseMonth" type="month"></label>
+          <button id="addExpenseBtn">Νέο έξοδο</button>
+        </section>
+
+        <section class="summary-strip finance-strip">
+          <div><span id="monthlyRevenue">0,00 €</span><small>Έσοδα μήνα</small></div>
+          <div><span id="monthlyExpenses">0,00 €</span><small>Έξοδα μήνα</small></div>
+          <div><span id="monthlyNet">0,00 €</span><small>Καθαρό αποτέλεσμα</small></div>
+        </section>
+
+        <section class="calendar-shell">
+          <div class="day-heading">
+            <div>
+              <h2>Μηνιαία έξοδα</h2>
+              <p id="expenseMeta">0 εγγραφές</p>
+            </div>
+          </div>
+          <div id="categorySummary" class="category-summary"></div>
+          <div id="expenseList" class="booking-list"></div>
+        </section>
+      </section>
+
+      <section id="previousView" hidden>
+        <section class="search-row">
+          <input id="previousSearchInput" type="search" placeholder="Αναζήτηση πελάτη, τηλεφώνου, πτήσης ή διαδρομής">
+        </section>
+        <section class="calendar-shell previous-shell">
+          <div class="day-heading">
+            <div>
+              <h2>Προηγούμενες Μεταφορές</h2>
+              <p id="previousMeta">0 ολοκληρωμένες μεταφορές</p>
+            </div>
+            <button id="refreshPreviousBtn" class="icon-btn" type="button" aria-label="Ανανέωση">↻</button>
+          </div>
+          <div id="previousList" class="booking-list"></div>
+        </section>
+      </section>
+
+      <section id="revenueView" hidden>
+        <section class="controls revenue-controls">
+          <label>Έτος<input id="revenueYear" type="number" min="2024" max="2040" step="1"></label>
+          <button id="refreshRevenueBtn" type="button">Ανανέωση</button>
+        </section>
+
+        <section class="summary-strip revenue-summary-strip">
+          <div><span id="seasonCash">0,00 €</span><small>Σύνολο Μετρητών</small></div>
+          <div><span id="seasonCard">0,00 €</span><small>Σύνολο Κάρτας</small></div>
+          <div><span id="seasonTotal">0,00 €</span><small>Γενικό Σύνολο</small></div>
+          <div><span id="seasonExpenses">0,00 €</span><small>Έξοδα</small></div>
+          <div><span id="seasonNet">0,00 €</span><small>Καθαρά Έσοδα</small></div>
+        </section>
+
+        <section class="calendar-shell">
+          <div class="day-heading">
+            <div>
+              <h2>Σύνολο Εσόδων Μήνα</h2>
+              <p id="revenueMeta">Απρίλιος - Νοέμβριος</p>
+            </div>
+          </div>
+          <div id="revenueMonthList" class="revenue-month-list"></div>
+        </section>
+      </section>
+
+      <section id="fleetView" hidden>
+        <section class="fleet-grid">
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Οχήματα</h2>
+                <p id="vehicleMeta">0 οχήματα</p>
+              </div>
+            </div>
+            <form id="vehicleForm" class="inline-form">
+              <input name="name" placeholder="Νέο όχημα" required>
+              <button type="submit">Προσθήκη</button>
+            </form>
+            <div id="vehicleList" class="option-list"></div>
+          </section>
+
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Οδηγοί</h2>
+                <p id="driverMeta">0 οδηγοί</p>
+              </div>
+            </div>
+            <form id="driverForm" class="inline-form">
+              <input name="name" placeholder="Νέος οδηγός" required>
+              <button type="submit">Προσθήκη</button>
+            </form>
+            <div id="driverList" class="option-list"></div>
+          </section>
+
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Πηγές Κράτησης</h2>
+                <p id="sourceMeta">0 πηγές</p>
+              </div>
+            </div>
+            <form id="sourceForm" class="inline-form">
+              <input name="name" placeholder="Νέα πηγή" required>
+              <button type="submit">Προσθήκη</button>
+            </form>
+            <div id="sourceList" class="option-list"></div>
+          </section>
+
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
+                <h2>Admin Debug</h2>
+                <p id="adminDebugMeta">0 εγγραφές</p>
+              </div>
+              <button id="refreshAdminDebugBtn" type="button">Ανανέωση</button>
+            </div>
+            <div id="adminDebugPanel" class="admin-debug-grid"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="bookingDialog">
+      <form id="bookingForm" method="dialog" class="booking-form">
+        <header>
+          <h2 id="dialogTitle">Νέα κράτηση</h2>
+          <button type="button" id="closeDialog" class="icon-btn" aria-label="Κλείσιμο">×</button>
+        </header>
+        <input type="hidden" name="id">
+        <div class="form-grid">
+          <label>Ημερομηνία<input name="date" type="date" required></label>
+          <label>Ώρα παραλαβής<input name="pickupTime" class="time-entry" type="text" inputmode="numeric" placeholder="1730 -> 17:30" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" required></label>
+          <label>Ώρα πτήσης/ferry<input name="travelTime" class="time-entry" type="text" inputmode="numeric" placeholder="1605 -> 16:05" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"></label>
+          <label>Αριθμός Πτήσης/Ferry<input name="flightNumber" placeholder="A3 1234"></label>
+          <label>Όνομα πελάτη<input name="customerName" required></label>
+          <label>Τηλέφωνο / WhatsApp<input name="phone" inputmode="tel"></label>
+          <label class="wide">Διαδρομή<input name="route" placeholder="Αεροδρόμιο Κω -> Πελάτης"></label>
+          <label>Άτομα<input name="passengers" type="number" min="1" value="1"></label>
+          <label>Τιμή (€)<input name="price" type="text" inputmode="decimal" placeholder="π.χ. 47,50" value="0"></label>
+          <label>Κατάσταση πληρωμής<select name="paymentStatus"><option value="Unpaid">Απλήρωτο</option><option value="Paid">Πληρωμένο</option></select></label>
+          <label>Τρόπος Πληρωμής<select name="paymentMethod"></select></label>
+          <label>Όχημα<select name="vehicle"></select></label>
+          <label>Οδηγός<select name="driver"></select></label>
+          <label>Πηγή Κράτησης<select name="bookingSource"></select></label>
+          <label>Κατάσταση ΑΑΔΕ<select name="taxStatus"><option>Μη Καταχωρημένο</option><option>Καταχωρημένο</option></select></label>
+          <label>Κατάσταση<select name="status"><option value="Pending">Σε αναμονή</option><option value="Confirmed">Επιβεβαιωμένη</option><option value="Completed">Ολοκληρωμένη</option><option value="Cancelled">Ακυρωμένη</option></select></label>
+          <label class="wide">Σημειώσεις<textarea name="notes" rows="2"></textarea></label>
+        </div>
+        <p id="formError" class="form-error" role="alert"></p>
+        <footer>
+          <button type="button" id="deleteBtn" class="danger">Διαγραφή</button>
+          <div>
+            <button type="button" id="cancelBtn" class="ghost">Άκυρο</button>
+            <button type="submit">Αποθήκευση</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="expenseDialog">
+      <form id="expenseForm" method="dialog" class="booking-form">
+        <header>
+          <h2 id="expenseDialogTitle">Νέο έξοδο</h2>
+          <button type="button" id="closeExpenseDialog" class="icon-btn" aria-label="Κλείσιμο">×</button>
+        </header>
+        <input type="hidden" name="id">
+        <div class="form-grid">
+          <label>Ημερομηνία<input name="date" type="date" required></label>
+          <label>Κατηγορία εξόδου<input name="category" value="Καύσιμα" required></label>
+          <label class="wide">Περιγραφή<input name="description" placeholder="π.χ. Πετρέλαιο OPEL VIVARO"></label>
+          <label>Ποσό (€)<input name="amount" type="number" min="0" step="0.01" value="0"></label>
+          <label>Τρόπος πληρωμής<select name="paymentMethod"></select></label>
+          <label>Όχημα<select name="vehicle"></select></label>
+          <label class="wide">Σημειώσεις<textarea name="notes" rows="3"></textarea></label>
+        </div>
+        <p id="expenseFormError" class="form-error" role="alert"></p>
+        <footer>
+          <button type="button" id="deleteExpenseBtn" class="danger">Διαγραφή</button>
+          <div>
+            <button type="button" id="cancelExpenseBtn" class="ghost">Άκυρο</button>
+            <button type="submit">Αποθήκευση</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+
+    <div id="printArea" aria-hidden="true"></div>
+    <script src="/app.js?v=11"></script>
+  </body>
+</html>

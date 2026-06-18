@@ -545,7 +545,15 @@ function openBooking(booking = null) {
     status: "Pending"
   };
   Object.entries(values).forEach(([key, value]) => {
-    if (bookingForm.elements[key]) bookingForm.elements[key].value = value ?? "";
+    if (bookingForm.elements[key]) {
+      if (key === "price") {
+        // Display price with comma decimal separator (el-GR style)
+        const num = parseFloat(String(value).replace(",", ".")) || 0;
+        bookingForm.elements[key].value = num % 1 === 0 ? String(num) : num.toFixed(2).replace(".", ",");
+      } else {
+        bookingForm.elements[key].value = value ?? "";
+      }
+    }
   });
   syncBookingStatusControl(booking);
   bookingDialog.showModal();
