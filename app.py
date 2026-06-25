@@ -64,6 +64,27 @@ def ensure_option_table(conn, table):
         conn.execute(f"UPDATE {table} SET updatedAt = CURRENT_TIMESTAMP WHERE updatedAt IS NULL")
 
 
+def ensure_booking_audit_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS booking_audit_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bookingId INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          loggedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+          createdAt TEXT,
+          updatedAt TEXT,
+          status TEXT,
+          driver TEXT,
+          vehicle TEXT,
+          paymentMethod TEXT,
+          taxStatus TEXT,
+          snapshot TEXT
+        )
+        """
+    )
+
+
 def upsert_option(conn, table, name):
     clean = str(name or "").strip()
     if not clean:
@@ -212,24 +233,7 @@ def init_db():
             )
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS booking_audit_log (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              bookingId INTEGER NOT NULL,
-              action TEXT NOT NULL,
-              loggedAt TEXT DEFAULT CURRENT_TIMESTAMP,
-              createdAt TEXT,
-              updatedAt TEXT,
-              status TEXT,
-              driver TEXT,
-              vehicle TEXT,
-              paymentMethod TEXT,
-              taxStatus TEXT,
-              snapshot TEXT
-            )
-            """
-        )
+        ensure_booking_audit_table(conn)
         ensure_option_table(conn, "vehicles")
         ensure_option_table(conn, "drivers")
         ensure_option_table(conn, "booking_sources")
@@ -288,6 +292,7 @@ def prune_backups():
 
 
 def audit_booking(conn, booking_id, action):
+    ensure_booking_audit_table(conn)
     row = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
     if not row:
         return
@@ -312,7 +317,17 @@ def audit_booking(conn, booking_id, action):
     )
 
 
+def persist_booking_audit(booking_id, action):
+    try:
+        with db() as conn:
+            audit_booking(conn, booking_id, action)
+    except sqlite3.Error:
+        # Audit must never undo a successful booking save.
+        pass
+
+
 def ensure_booking_audit_baseline(conn):
+    ensure_booking_audit_table(conn)
     rows = conn.execute(
         """
         SELECT id
@@ -568,8 +583,11 @@ class Handler(SimpleHTTPRequestHandler):
         with db() as conn:
             cur = conn.execute(f"INSERT INTO bookings ({keys}) VALUES ({placeholders})", booking)
             saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (cur.lastrowid,)).fetchone()
-            audit_booking(conn, cur.lastrowid, "created")
-        return self.send_json(row_to_dict(saved), 201)
+        saved_booking = row_to_dict(saved)
+        if not saved_booking or not saved_booking.get("id"):
+            return self.send_json({"error": "Η κράτηση δεν επιβεβαιώθηκε στη βάση."}, 500)
+        persist_booking_audit(saved_booking["id"], "created")
+        return self.send_json(saved_booking, 201)
 
     def list_bookings(self, parsed):
         if not self.authorized():
@@ -589,7 +607,7 @@ class Handler(SimpleHTTPRequestHandler):
             params["end"] = normalize_date(query["end"][0])
             has_date_filter = True
         if query.get("q", [""])[0]:
-            where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
+            where.append("(CAST(id AS TEXT) LIKE :q OR customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR pickupTime LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
             params["q"] = f"%{query['q'][0]}%"
         if query.get("tax", [""])[0] in TAX_STATUSES:
             where.append("taxStatus = :tax")
@@ -632,7 +650,7 @@ class Handler(SimpleHTTPRequestHandler):
             if cur.rowcount == 0:
                 return self.send_json({"error": "Δεν βρέθηκε η κράτηση."}, 404)
             saved = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
-            audit_booking(conn, booking_id, "updated")
+        persist_booking_audit(booking_id, "updated")
         return self.send_json(row_to_dict(saved))
 
     def totals(self, parsed):
@@ -969,7 +987,7 @@ class Handler(SimpleHTTPRequestHandler):
         active_range_where = list(visible_where)
         params = {"start": start, "end": end}
         if q:
-            visible_where.append("(customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
+            visible_where.append("(CAST(id AS TEXT) LIKE :q OR customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR pickupTime LIKE :q OR flightNumber LIKE :q OR route LIKE :q)")
             params["q"] = f"%{q}%"
         if tax in TAX_STATUSES:
             visible_where.append("taxStatus = :tax")
@@ -990,6 +1008,25 @@ class Handler(SimpleHTTPRequestHandler):
             active_in_range = conn.execute(active_range_sql, {"start": start, "end": end}).fetchone()["total"]
             visible = conn.execute(visible_sql, params).fetchone()["total"]
             audit_rows = conn.execute("SELECT COUNT(*) AS total FROM booking_audit_log").fetchone()["total"]
+            matches = []
+            if q:
+                match_where = ["(CAST(id AS TEXT) LIKE :q OR customerName LIKE :q OR phone LIKE :q OR hotel LIKE :q OR date LIKE :q OR pickupTime LIKE :q OR flightNumber LIKE :q OR route LIKE :q)"]
+                match_params = {"q": f"%{q}%"}
+                if tax in TAX_STATUSES:
+                    match_where.append("taxStatus = :tax")
+                    match_params["tax"] = tax
+                if driver:
+                    match_where.append("driver = :driver")
+                    match_params["driver"] = driver
+                matches = [
+                    row_to_dict(row)
+                    for row in conn.execute(
+                        "SELECT id, date, pickupTime, customerName, route, status, driver, taxStatus, updatedAt FROM bookings WHERE "
+                        + " AND ".join(match_where)
+                        + " ORDER BY date DESC, pickupTime DESC LIMIT 20",
+                        match_params,
+                    ).fetchall()
+                ]
         return self.send_json({
             "totalBookings": db_rows,
             "upcoming": upcoming,
@@ -1000,6 +1037,7 @@ class Handler(SimpleHTTPRequestHandler):
             "hiddenByFilters": max(active_in_range - visible, 0),
             "databaseRowsCount": db_rows,
             "auditRowsCount": audit_rows,
+            "matches": matches,
             "range": {"start": start, "end": end},
         })
 

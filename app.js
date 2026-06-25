@@ -90,6 +90,7 @@ function bindEvents() {
   $("#refreshPreviousBtn").addEventListener("click", loadPreviousBookings);
   $("#refreshRevenueBtn").addEventListener("click", loadMonthlyRevenue);
   $("#refreshAdminDebugBtn").addEventListener("click", loadAdminDebug);
+  $("#adminDebugSearchInput").addEventListener("input", debounce(loadAdminDebug, 220));
   revenueYear.addEventListener("change", loadMonthlyRevenue);
   bookingForm.addEventListener("submit", saveBooking);
   bookingForm.querySelectorAll(".time-entry").forEach((input) => bindTimeEntry(input));
@@ -258,7 +259,8 @@ async function loadAdminDebug() {
   if (!state.token) return;
   const range = currentRange();
   const params = new URLSearchParams({ start: range.start, end: range.end });
-  const q = $("#searchInput").value.trim();
+  const debugSearch = $("#adminDebugSearchInput")?.value.trim();
+  const q = debugSearch || $("#searchInput").value.trim();
   if (q) params.set("q", q);
   if (state.taxFilter) params.set("tax", state.taxFilter);
   if (state.driverFilter) params.set("driver", state.driverFilter);
@@ -284,6 +286,14 @@ function renderAdminDebug() {
     <div><span>${data.hiddenByFilters}</span><small>Hidden by filters</small></div>
     <div><span>${data.databaseRowsCount}</span><small>Database rows count</small></div>
     <div><span>${data.auditRowsCount}</span><small>Audit rows</small></div>
+    ${data.matches?.length ? `
+      <div class="debug-results">
+        <strong>Αποτελέσματα αναζήτησης</strong>
+        ${data.matches.map((booking) => `
+          <span>ID ${escapeHtml(booking.id)} · ${escapeHtml(booking.date)} ${escapeHtml(booking.pickupTime)} · ${escapeHtml(booking.customerName)} · ${escapeHtml(booking.route)} · ${escapeHtml(booking.status)}</span>
+        `).join("")}
+      </div>
+    ` : ""}
   `;
 }
 
@@ -545,15 +555,7 @@ function openBooking(booking = null) {
     status: "Pending"
   };
   Object.entries(values).forEach(([key, value]) => {
-    if (bookingForm.elements[key]) {
-      if (key === "price") {
-        // Display price with comma decimal separator (el-GR style)
-        const num = parseFloat(String(value).replace(",", ".")) || 0;
-        bookingForm.elements[key].value = num % 1 === 0 ? String(num) : num.toFixed(2).replace(".", ",");
-      } else {
-        bookingForm.elements[key].value = value ?? "";
-      }
-    }
+    if (bookingForm.elements[key]) bookingForm.elements[key].value = value ?? "";
   });
   syncBookingStatusControl(booking);
   bookingDialog.showModal();
@@ -601,16 +603,35 @@ async function saveBooking(event) {
   data.travelTime = formatTimeInput(data.travelTime, true);
   const id = data.id || state.editingId;
   try {
-    await api(id ? `/api/bookings/${id}` : "/api/bookings", {
+    const saved = await api(id ? `/api/bookings/${id}` : "/api/bookings", {
       method: id ? "PUT" : "POST",
       body: JSON.stringify(data)
     });
+    if (!saved?.id) {
+      throw new Error("Η κράτηση δεν επιβεβαιώθηκε στη βάση. Παρακαλώ ελέγξτε πριν συνεχίσετε.");
+    }
+    if (!id) {
+      await verifySavedBooking(saved, data);
+    }
     bookingDialog.close();
+    alert(`Η κράτηση αποθηκεύτηκε επιτυχώς. ID: ${saved.id}`);
     setDate(data.date || state.date);
     loadPreviousBookings();
     loadMonthlyRevenue();
   } catch (error) {
     $("#formError").textContent = error.message;
+  }
+}
+
+async function verifySavedBooking(saved, data) {
+  const params = new URLSearchParams({
+    date: saved.date || data.date,
+    q: String(saved.id)
+  });
+  const rows = await api(`/api/bookings?${params.toString()}`);
+  const found = rows.some((booking) => Number(booking.id) === Number(saved.id));
+  if (!found) {
+    throw new Error("Η κράτηση δεν επιβεβαιώθηκε στη βάση. Παρακαλώ ελέγξτε πριν συνεχίσετε.");
   }
 }
 
