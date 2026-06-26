@@ -321,8 +321,8 @@ def persist_booking_audit(booking_id, action):
     try:
         with db() as conn:
             audit_booking(conn, booking_id, action)
-    except sqlite3.Error:
-        # Audit must never undo a successful booking save.
+    except Exception:
+        # Audit runs after commit; never undo a saved booking.
         pass
 
 
