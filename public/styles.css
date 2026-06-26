@@ -364,6 +364,20 @@ textarea { resize: vertical; }
   color: var(--muted);
   font-size: 12px;
 }
+.admin-debug-grid .debug-results {
+  grid-column: 1 / -1;
+}
+.admin-debug-grid .debug-results strong {
+  display: block;
+  margin-bottom: 8px;
+}
+.admin-debug-grid .debug-results span {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 0;
+}
 .route-chip, .flight-chip {
   display: inline-flex;
   align-items: center;

@@ -610,12 +610,17 @@ async function saveBooking(event) {
     if (!saved?.id) {
       throw new Error("Η κράτηση δεν επιβεβαιώθηκε στη βάση. Παρακαλώ ελέγξτε πριν συνεχίσετε.");
     }
+    let verifyWarning = "";
     if (!id) {
-      await verifySavedBooking(saved, data);
+      verifyWarning = await verifySavedBooking(saved, data);
     }
     bookingDialog.close();
-    alert(`Η κράτηση αποθηκεύτηκε επιτυχώς. ID: ${saved.id}`);
-    setDate(data.date || state.date);
+    if (verifyWarning) {
+      alert(`Η κράτηση αποθηκεύτηκε (ID: ${saved.id}), αλλά η επαλήθευση δεν ολοκληρώθηκε.\n\n${verifyWarning}`);
+    } else {
+      alert(`Η κράτηση αποθηκεύτηκε επιτυχώς. ID: ${saved.id}`);
+    }
+    setDate(saved.date || data.date || state.date);
     loadPreviousBookings();
     loadMonthlyRevenue();
   } catch (error) {
@@ -624,14 +629,19 @@ async function saveBooking(event) {
 }
 
 async function verifySavedBooking(saved, data) {
-  const params = new URLSearchParams({
-    date: data.date || saved.date,
-    q: data.customerName || saved.customerName || ""
-  });
-  const rows = await api(`/api/bookings?${params.toString()}`);
-  const found = rows.some((booking) => Number(booking.id) === Number(saved.id));
-  if (!found) {
-    throw new Error("Η κράτηση δεν επιβεβαιώθηκε στη βάση. Παρακαλώ ελέγξτε πριν συνεχίσετε.");
+  try {
+    const params = new URLSearchParams({
+      date: saved.date || data.date,
+      q: String(saved.id)
+    });
+    const rows = await api(`/api/bookings?${params.toString()}`);
+    const found = rows.some((booking) => Number(booking.id) === Number(saved.id));
+    if (!found) {
+      return "Η κράτηση δεν εμφανίστηκε αμέσως στη λίστα. Ελέγξτε τη βάση ή τα φίλτρα.";
+    }
+    return "";
+  } catch (error) {
+    return error.message || "Η επαλήθευση απέτυχε.";
   }
 }
 

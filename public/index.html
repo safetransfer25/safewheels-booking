@@ -205,6 +205,7 @@
               </div>
               <button id="refreshAdminDebugBtn" type="button">Ανανέωση</button>
             </div>
+            <input id="adminDebugSearchInput" type="search" placeholder="Αναζήτηση ID, ονόματος, διαδρομής ή ώρας">
             <div id="adminDebugPanel" class="admin-debug-grid"></div>
           </section>
         </section>
@@ -227,7 +228,7 @@
           <label>Τηλέφωνο / WhatsApp<input name="phone" inputmode="tel"></label>
           <label class="wide">Διαδρομή<input name="route" placeholder="Αεροδρόμιο Κω -> Πελάτης"></label>
           <label>Άτομα<input name="passengers" type="number" min="1" value="1"></label>
-          <label>Τιμή (€)<input id="price" name="price" type="text" value="0" inputmode="decimal" autocomplete="off" placeholder="π.χ. 47,50"></label>
+         <label>Τιμή (€)<input id="price" name="price" type="text" value="0" inputmode="decimal" autocomplete="off" placeholder="π.χ. 47,50"></label>
           <label>Κατάσταση πληρωμής<select name="paymentStatus"><option value="Unpaid">Απλήρωτο</option><option value="Paid">Πληρωμένο</option></select></label>
           <label>Τρόπος Πληρωμής<select name="paymentMethod"></select></label>
           <label>Όχημα<select name="vehicle"></select></label>
@@ -276,6 +277,6 @@
     </dialog>
 
     <div id="printArea" aria-hidden="true"></div>
-    <script src="/app.js?v=13"></script>
+    <script src="/app.js?v=11"></script>
   </body>
 </html>
