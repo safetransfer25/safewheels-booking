@@ -1,20 +1,85 @@
+import io
 import json
 import os
 import re
 import shutil
 import secrets
 import sqlite3
+import threading
 from datetime import date, datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
 
 ROOT = Path(__file__).parent
 PUBLIC = ROOT / "public"
 DB_PATH = Path(os.environ.get("SAFEWHEELS_DB", ROOT / "safewheels.sqlite"))
 BACKUP_DIR = Path(os.environ.get("SAFEWHEELS_BACKUP_DIR", DB_PATH.parent / "backups"))
+LIVE_BACKUP_DIR = Path(os.environ.get("SAFEWHEELS_LIVE_BACKUP_DIR", BACKUP_DIR))
 MAX_BACKUPS = 20
+DB_LOCK = threading.RLock()
+BOOKINGS_SCHEMA_COLUMNS = {
+    "id",
+    "date",
+    "pickupTime",
+    "travelTime",
+    "flightNumber",
+    "customerName",
+    "phone",
+    "hotel",
+    "route",
+    "passengers",
+    "luggage",
+    "price",
+    "deposit",
+    "balance",
+    "paymentStatus",
+    "paymentMethod",
+    "vehicle",
+    "driver",
+    "bookingSource",
+    "taxStatus",
+    "status",
+    "notes",
+    "createdAt",
+    "updatedAt",
+}
+XLSX_EXPORT_COLUMNS = [
+    ("ID", "id"),
+    ("Created At", "createdAt"),
+    ("Updated At", "updatedAt"),
+    ("Date", "date"),
+    ("Time", "pickupTime"),
+    ("Client", "customerName"),
+    ("Phone", "phone"),
+    ("Pickup", "hotel"),
+    ("Dropoff", "route"),
+    ("Flight", "flightNumber"),
+    ("Travel Time", "travelTime"),
+    ("Passengers", "passengers"),
+    ("Luggage", "luggage"),
+    ("Price", "price"),
+    ("Deposit", "deposit"),
+    ("Balance", "balance"),
+    ("Payment Status", "paymentStatus"),
+    ("Payment Method", "paymentMethod"),
+    ("Driver", "driver"),
+    ("Vehicle", "vehicle"),
+    ("Booking Source", "bookingSource"),
+    ("Status", "status"),
+    ("AADE Status", "taxStatus"),
+    ("Notes", "notes"),
+]
 PORT = int(os.environ.get("PORT", "4173"))
 SESSIONS = set()
 LOGIN_USERNAME = os.environ.get("SAFEWHEELS_USERNAME", "admin")
@@ -49,7 +114,7 @@ def db():
 
 def table_columns(conn, table):
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return {row["name"] for row in rows}
+    return {row[1] for row in rows}
 
 
 def ensure_option_table(conn, table):
@@ -291,6 +356,175 @@ def prune_backups():
         old_backup.unlink(missing_ok=True)
 
 
+def live_backup_timestamp():
+    return datetime.now(APP_TZ).strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def is_allowed_live_backup_name(name):
+    clean = Path(unquote(name)).name
+    if clean != name or ".." in name or "/" in name or "\\" in name:
+        return False
+    if not clean.endswith(".sqlite"):
+        return False
+    return clean.startswith("safewheels_live_backup_") or clean.startswith(
+        "safewheels_emergency_before_restore_"
+    )
+
+
+def copy_sqlite_file(source, destination):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    dst = sqlite3.connect(destination)
+    try:
+        src.backup(dst)
+        dst.commit()
+    finally:
+        dst.close()
+        src.close()
+
+
+def create_live_backup(kind="live"):
+    if not DB_PATH.exists():
+        raise FileNotFoundError("Database file not found.")
+    LIVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = live_backup_timestamp()
+    prefix = (
+        "safewheels_emergency_before_restore_"
+        if kind == "emergency"
+        else "safewheels_live_backup_"
+    )
+    backup_path = LIVE_BACKUP_DIR / f"{prefix}{timestamp}.sqlite"
+    suffix = 1
+    while backup_path.exists():
+        backup_path = LIVE_BACKUP_DIR / f"{prefix}{timestamp}_{suffix:02d}.sqlite"
+        suffix += 1
+    with DB_LOCK:
+        copy_sqlite_file(DB_PATH, backup_path)
+    return backup_path
+
+
+def list_live_backups():
+    LIVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    items = []
+    for path in LIVE_BACKUP_DIR.glob("safewheels_*.sqlite"):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        items.append(
+            {
+                "filename": path.name,
+                "size": stat.st_size,
+                "createdAt": datetime.fromtimestamp(stat.st_mtime, APP_TZ).isoformat(),
+            }
+        )
+    items.sort(key=lambda item: item["createdAt"], reverse=True)
+    return items
+
+
+def validate_sqlite_backup(path):
+    if not path.exists() or path.stat().st_size < 100:
+        return False, "Το αρχείο SQLite είναι κενό ή πολύ μικρό."
+    header = path.read_bytes()[:16]
+    if not header.startswith(b"SQLite format 3"):
+        return False, "Το αρχείο δεν είναι έγκυρο SQLite database."
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "bookings" not in tables:
+            conn.close()
+            return False, "Λείπει ο πίνακας bookings."
+        columns = table_columns(conn, "bookings")
+        missing = sorted(BOOKINGS_SCHEMA_COLUMNS - columns)
+        if missing:
+            conn.close()
+            return False, f"Ασύμβατο schema bookings. Λείπουν: {', '.join(missing)}"
+        count = conn.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
+        conn.execute("SELECT id, date, customerName FROM bookings LIMIT 1").fetchone()
+        conn.close()
+        return True, {"bookingCount": count, "columns": sorted(columns)}
+    except sqlite3.Error as exc:
+        return False, f"Σφάλμα ανάγνωσης SQLite: {exc}"
+
+
+def restore_sqlite_backup(upload_path):
+    with DB_LOCK:
+        emergency_path = create_live_backup("emergency")
+        valid, details = validate_sqlite_backup(upload_path)
+        if not valid:
+            return False, details, emergency_path.name
+        if DB_PATH.exists():
+            copy_sqlite_file(upload_path, DB_PATH)
+        else:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(upload_path, DB_PATH)
+        verify_conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        verify_conn.row_factory = sqlite3.Row
+        try:
+            count = verify_conn.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
+            verify_conn.execute("SELECT id FROM bookings LIMIT 1").fetchone()
+        finally:
+            verify_conn.close()
+        return True, {"bookingCount": count, "emergencyBackup": emergency_path.name}, emergency_path.name
+
+
+def build_bookings_xlsx():
+    if not OPENPYXL_AVAILABLE:
+        raise RuntimeError("openpyxl is not installed.")
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM bookings ORDER BY id ASC").fetchall()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Bookings"
+    headers = [label for label, _ in XLSX_EXPORT_COLUMNS]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for row in rows:
+        data = row_to_dict(row)
+        sheet.append([data.get(field, "") for _, field in XLSX_EXPORT_COLUMNS])
+    sheet.freeze_panes = "A2"
+    for index, (label, _) in enumerate(XLSX_EXPORT_COLUMNS, start=1):
+        values = [len(str(label))]
+        for excel_row in sheet.iter_rows(
+            min_row=2, min_col=index, max_col=index, values_only=True
+        ):
+            values.append(len(str(excel_row[0] or "")))
+        sheet.column_dimensions[get_column_letter(index)].width = min(max(values) + 2, 48)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def parse_multipart_upload(content_type, body):
+    boundary = None
+    for piece in content_type.split(";"):
+        piece = piece.strip()
+        if piece.startswith("boundary="):
+            boundary = piece.split("=", 1)[1].strip().strip('"')
+    if not boundary:
+        raise ValueError("Missing multipart boundary.")
+    delimiter = ("--" + boundary).encode()
+    for part in body.split(delimiter):
+        if b"filename=" not in part:
+            continue
+        _, _, payload = part.partition(b"\r\n\r\n")
+        if not payload:
+            continue
+        if payload.endswith(b"\r\n"):
+            payload = payload[:-2]
+        if payload.endswith(b"--"):
+            payload = payload[:-2]
+        if payload.startswith(b"\r\n"):
+            payload = payload[2:]
+        return payload
+    raise ValueError("Missing uploaded file.")
+
+
 def audit_booking(conn, booking_id, action):
     ensure_booking_audit_table(conn)
     row = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
@@ -522,6 +756,11 @@ class Handler(SimpleHTTPRequestHandler):
             return self.create_expense()
         if self.path.startswith("/api/options/"):
             return self.create_option()
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/admin/create-backup":
+            return self.admin_create_backup()
+        if parsed.path == "/api/admin/restore-backup":
+            return self.admin_restore_backup()
         self.send_error(404)
 
     def do_GET(self):
@@ -540,6 +779,13 @@ class Handler(SimpleHTTPRequestHandler):
             return self.options()
         if parsed.path == "/api/admin/debug":
             return self.admin_debug(parsed)
+        if parsed.path == "/api/admin/backups":
+            return self.admin_list_backups()
+        if parsed.path == "/api/admin/export-bookings-xlsx":
+            return self.admin_export_bookings_xlsx()
+        if parsed.path.startswith("/api/admin/download-backup/"):
+            filename = parsed.path.rsplit("/", 1)[-1]
+            return self.admin_download_backup(filename)
         if parsed.path.startswith("/api/"):
             return self.send_error(404)
         return super().do_GET()
@@ -1041,6 +1287,98 @@ class Handler(SimpleHTTPRequestHandler):
             "range": {"start": start, "end": end},
         })
 
+    def admin_create_backup(self):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        try:
+            backup_path = create_live_backup("live")
+            body = backup_path.read_bytes()
+            return self.send_file(
+                body,
+                "application/x-sqlite3",
+                backup_path.name,
+            )
+        except Exception as exc:
+            return self.send_json({"error": f"Backup failed: {exc}"}, 500)
+
+    def admin_list_backups(self):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        return self.send_json({"backups": list_live_backups()})
+
+    def admin_download_backup(self, filename):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        if not is_allowed_live_backup_name(filename):
+            return self.send_json({"error": "Invalid backup filename."}, 400)
+        backup_path = LIVE_BACKUP_DIR / Path(filename).name
+        if not backup_path.exists():
+            return self.send_json({"error": "Backup not found."}, 404)
+        body = backup_path.read_bytes()
+        return self.send_file(body, "application/x-sqlite3", backup_path.name)
+
+    def admin_export_bookings_xlsx(self):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        if not OPENPYXL_AVAILABLE:
+            return self.send_json({"error": "openpyxl is not installed on the server."}, 500)
+        try:
+            body = build_bookings_xlsx()
+            filename = f"safewheels_bookings_export_{datetime.now(APP_TZ).strftime('%Y-%m-%d_%H-%M')}.xlsx"
+            return self.send_file(
+                body,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename,
+            )
+        except Exception as exc:
+            return self.send_json({"error": f"Export failed: {exc}"}, 500)
+
+    def admin_restore_backup(self):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            return self.send_json({"error": "Expected multipart/form-data upload."}, 400)
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return self.send_json({"error": "Empty upload."}, 400)
+        body = self.rfile.read(length)
+        try:
+            if "multipart/form-data" in content_type:
+                file_bytes = parse_multipart_upload(content_type, body)
+            elif content_type == "application/octet-stream":
+                file_bytes = body
+            else:
+                return self.send_json({"error": "Expected multipart/form-data upload."}, 400)
+        except ValueError as exc:
+            return self.send_json({"error": str(exc)}, 400)
+        LIVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        temp_path = LIVE_BACKUP_DIR / f"restore_upload_{live_backup_timestamp()}.sqlite"
+        try:
+            with temp_path.open("wb") as handle:
+                handle.write(file_bytes)
+            ok, details, emergency_name = restore_sqlite_backup(temp_path)
+            if not ok:
+                return self.send_json(
+                    {
+                        "error": details,
+                        "emergencyBackup": emergency_name,
+                        "restored": False,
+                    },
+                    400,
+                )
+            return self.send_json(
+                {
+                    "restored": True,
+                    "emergencyBackup": emergency_name,
+                    "details": details,
+                }
+            )
+        except Exception as exc:
+            return self.send_json({"error": f"Restore failed: {exc}", "restored": False}, 500)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def delete_row(self, table, parsed):
         if not self.authorized():
             return self.send_json({"error": "Unauthorized"}, 401)
@@ -1069,6 +1407,14 @@ class Handler(SimpleHTTPRequestHandler):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_file(self, body, content_type, filename):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

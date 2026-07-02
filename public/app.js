@@ -22,6 +22,8 @@ const state = {
   editingExpenseId: null
 };
 
+const BUILD_VERSION = "LIVE_DATA_SAFETY_2026_07_01";
+
 const $ = (selector) => document.querySelector(selector);
 const loginScreen = $("#loginScreen");
 const app = $("#app");
@@ -91,6 +93,12 @@ function bindEvents() {
   $("#refreshRevenueBtn").addEventListener("click", loadMonthlyRevenue);
   $("#refreshAdminDebugBtn").addEventListener("click", loadAdminDebug);
   $("#adminDebugSearchInput").addEventListener("input", debounce(loadAdminDebug, 220));
+  $("#createLiveBackupBtn").addEventListener("click", createLiveBackup);
+  $("#downloadLatestBackupBtn").addEventListener("click", downloadLatestBackup);
+  $("#exportExcelBtn").addEventListener("click", exportBookingsExcel);
+  $("#restoreBackupBtn").addEventListener("click", () => $("#restoreBackupInput").click());
+  $("#restoreBackupInput").addEventListener("change", restoreBackupUpload);
+  $("#refreshAdminBackupsBtn").addEventListener("click", loadAdminBackups);
   revenueYear.addEventListener("change", loadMonthlyRevenue);
   bookingForm.addEventListener("submit", saveBooking);
   bookingForm.querySelectorAll(".time-entry").forEach((input) => bindTimeEntry(input));
@@ -168,6 +176,7 @@ function switchTab(tab) {
   if (tab === "fleet") {
     renderOptionsManager();
     loadAdminDebug();
+    loadAdminBackups();
   }
 }
 
@@ -266,6 +275,181 @@ async function loadAdminDebug() {
   if (state.driverFilter) params.set("driver", state.driverFilter);
   state.adminDebug = await api(`/api/admin/debug?${params.toString()}`);
   renderAdminDebug();
+}
+
+function setAdminToolsStatus(message, isError = false) {
+  const node = $("#adminToolsStatus");
+  if (!node) return;
+  node.textContent = message || "";
+  node.classList.toggle("error", Boolean(isError));
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function filenameFromDisposition(header, fallback) {
+  const match = (header || "").match(/filename=\"?([^\";]+)\"?/);
+  return match ? match[1] : fallback;
+}
+
+async function fetchAdminFile(path, fallbackName, method = "GET", body = null) {
+  const headers = { "x-safewheels-session": state.token };
+  const options = { method, headers };
+  if (body) options.body = body;
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Το αίτημα απέτυχε.");
+  }
+  const blob = await response.blob();
+  const filename = filenameFromDisposition(response.headers.get("Content-Disposition"), fallbackName);
+  return { blob, filename };
+}
+
+async function loadAdminBackups() {
+  try {
+    const data = await api("/api/admin/backups");
+    state.adminBackups = data.backups || [];
+    renderAdminBackups();
+  } catch (error) {
+    setAdminToolsStatus(error.message, true);
+  }
+}
+
+function renderAdminBackups() {
+  const list = $("#adminBackupList");
+  const meta = $("#adminBackupMeta");
+  if (!list || !meta) return;
+  const backups = state.adminBackups || [];
+  meta.textContent = backups.length ? `${backups.length} backup αρχεία` : "Δεν υπάρχουν backups";
+  if (!backups.length) {
+    list.innerHTML = `<li class="empty">Δεν υπάρχουν live backups ακόμα.</li>`;
+    return;
+  }
+  list.innerHTML = backups.map((item) => `
+    <li>
+      <span>${escapeHtml(item.filename)}</span>
+      <small>${formatBytes(item.size)} · ${escapeHtml(item.createdAt || "-")}</small>
+      <button type="button" class="small-btn" data-backup="${escapeHtml(item.filename)}">Download</button>
+    </li>
+  `).join("");
+  list.querySelectorAll("[data-backup]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        setAdminToolsStatus("Λήψη backup...");
+        const { blob, filename } = await fetchAdminFile(
+          `/api/admin/download-backup/${encodeURIComponent(button.dataset.backup)}`,
+          button.dataset.backup
+        );
+        downloadBlob(blob, filename);
+        setAdminToolsStatus(`Έγινε λήψη: ${filename}`);
+      } catch (error) {
+        setAdminToolsStatus(error.message, true);
+      }
+    });
+  });
+}
+
+function formatBytes(bytes) {
+  const size = Number(bytes || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function createLiveBackup() {
+  try {
+    setAdminToolsStatus("Δημιουργία live backup...");
+    const { blob, filename } = await fetchAdminFile(
+      "/api/admin/create-backup",
+      "safewheels_live_backup.sqlite",
+      "POST"
+    );
+    downloadBlob(blob, filename);
+    setAdminToolsStatus(`Backup δημιουργήθηκε: ${filename}`);
+    await loadAdminBackups();
+    await loadAdminDebug();
+  } catch (error) {
+    setAdminToolsStatus(error.message, true);
+  }
+}
+
+async function downloadLatestBackup() {
+  try {
+    if (!state.adminBackups?.length) await loadAdminBackups();
+    const latest = state.adminBackups?.[0];
+    if (!latest) {
+      setAdminToolsStatus("Δεν υπάρχει backup. Δημιουργήστε πρώτα live backup.", true);
+      return;
+    }
+    setAdminToolsStatus("Λήψη τελευταίου backup...");
+    const { blob, filename } = await fetchAdminFile(
+      `/api/admin/download-backup/${encodeURIComponent(latest.filename)}`,
+      latest.filename
+    );
+    downloadBlob(blob, filename);
+    setAdminToolsStatus(`Έγινε λήψη: ${filename}`);
+  } catch (error) {
+    setAdminToolsStatus(error.message, true);
+  }
+}
+
+async function exportBookingsExcel() {
+  try {
+    setAdminToolsStatus("Εξαγωγή Excel...");
+    const { blob, filename } = await fetchAdminFile(
+      "/api/admin/export-bookings-xlsx",
+      `safewheels_bookings_export_${localDateIso()}.xlsx`
+    );
+    downloadBlob(blob, filename);
+    setAdminToolsStatus(`Έγινε εξαγωγή: ${filename}`);
+  } catch (error) {
+    setAdminToolsStatus(error.message, true);
+  }
+}
+
+async function restoreBackupUpload(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".sqlite")) {
+    setAdminToolsStatus("Μόνο αρχεία .sqlite επιτρέπονται.", true);
+    return;
+  }
+  const confirmed = window.confirm(
+    "ΠΡΟΣΟΧΗ: Θα γίνει restore της βάσης από το επιλεγμένο αρχείο.\n\n" +
+    "Πριν το restore θα δημιουργηθεί αυτόματα emergency backup.\n\n" +
+    "Συνέχεια;"
+  );
+  if (!confirmed) return;
+  try {
+    setAdminToolsStatus("Restore σε εξέλιξη...");
+    const body = new FormData();
+    body.append("file", file, file.name);
+    const response = await fetch("/api/admin/restore-backup", {
+      method: "POST",
+      headers: { "x-safewheels-session": state.token },
+      body
+    });
+    const result = await response.json();
+    if (!response.ok || !result.restored) {
+      throw new Error(result.error || "Το restore απέτυχε.");
+    }
+    setAdminToolsStatus(
+      `Restore OK · ${result.details?.bookingCount || 0} κρατήσεις · emergency: ${result.emergencyBackup || "-"}`
+    );
+    await loadAdminBackups();
+    await loadAdminDebug();
+    await loadBookings();
+  } catch (error) {
+    setAdminToolsStatus(error.message, true);
+  }
 }
 
 function renderAdminDebug() {
@@ -538,6 +722,10 @@ function formatTimeInput(value, complete) {
 function openBooking(booking = null) {
   state.editingId = booking?.id || null;
   bookingForm.reset();
+  if (!booking) {
+    state.editingId = null;
+    if (bookingForm.elements.id) bookingForm.elements.id.value = "";
+  }
   $("#formError").textContent = "";
   $("#dialogTitle").textContent = booking ? "Επεξεργασία κράτησης" : "Νέα κράτηση";
   $("#deleteBtn").hidden = !booking || booking.status === "Completed";
@@ -601,7 +789,8 @@ async function saveBooking(event) {
   const data = Object.fromEntries(new FormData(bookingForm));
   data.pickupTime = formatTimeInput(data.pickupTime, true);
   data.travelTime = formatTimeInput(data.travelTime, true);
-  const id = data.id || state.editingId;
+  const isNewBooking = $("#dialogTitle").textContent === "Νέα κράτηση";
+  const id = isNewBooking ? null : (data.id || state.editingId);
   try {
     const saved = await api(id ? `/api/bookings/${id}` : "/api/bookings", {
       method: id ? "PUT" : "POST",
@@ -611,10 +800,12 @@ async function saveBooking(event) {
       throw new Error("Η κράτηση δεν επιβεβαιώθηκε στη βάση. Παρακαλώ ελέγξτε πριν συνεχίσετε.");
     }
     let verifyWarning = "";
-    if (!id) {
+    if (isNewBooking) {
       verifyWarning = await verifySavedBooking(saved, data);
     }
     bookingDialog.close();
+    state.editingId = null;
+    if (bookingForm.elements.id) bookingForm.elements.id.value = "";
     if (verifyWarning) {
       alert(`Η κράτηση αποθηκεύτηκε (ID: ${saved.id}), αλλά η επαλήθευση δεν ολοκληρώθηκε.\n\n${verifyWarning}`);
     } else {

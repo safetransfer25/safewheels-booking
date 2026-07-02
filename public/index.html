@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#0f766e">
     <title>SafeWheels Kos | Κρατήσεις Transfer</title>
-    <link rel="stylesheet" href="/styles.css?v=11">
+    <link rel="stylesheet" href="/styles.css?v=LIVE_DATA_SAFETY_2026_07_01">
   </head>
   <body>
     <main id="loginScreen" class="login-screen">
@@ -82,7 +82,7 @@
               <h2 id="planTitle">Σήμερα</h2>
               <p id="planMeta">0 transfer</p>
             </div>
-            <button id="printBtn">Εξαγωγή / Εκτύπωση</button>
+            <button id="printBtn" type="button">Εξαγωγή / Εκτύπωση</button>
           </div>
           <div id="bookingList" class="booking-list"></div>
         </section>
@@ -200,8 +200,29 @@
           <section class="calendar-shell fleet-panel">
             <div class="day-heading">
               <div>
+                <h2>Live Data Safety</h2>
+                <p id="adminBackupMeta">Backup / export / restore</p>
+                <p class="build-marker">SafeWheels Booking build: LIVE_DATA_SAFETY_2026_07_01</p>
+              </div>
+              <button id="refreshAdminBackupsBtn" type="button">Ανανέωση</button>
+            </div>
+            <div class="admin-tools">
+              <button id="createLiveBackupBtn" type="button">Create Live Backup</button>
+              <button id="downloadLatestBackupBtn" type="button">Download Latest Backup</button>
+              <button id="exportExcelBtn" type="button">Export Excel</button>
+              <input id="restoreBackupInput" type="file" accept=".sqlite" hidden>
+              <button id="restoreBackupBtn" type="button">Restore Backup</button>
+            </div>
+            <p id="adminToolsStatus" class="admin-tools-status"></p>
+            <ul id="adminBackupList" class="admin-backup-list"></ul>
+          </section>
+
+          <section class="calendar-shell fleet-panel">
+            <div class="day-heading">
+              <div>
                 <h2>Admin Debug</h2>
                 <p id="adminDebugMeta">0 εγγραφές</p>
+                <p class="build-marker">SafeWheels Booking build: LIVE_DATA_SAFETY_2026_07_01</p>
               </div>
               <button id="refreshAdminDebugBtn" type="button">Ανανέωση</button>
             </div>
@@ -277,6 +298,6 @@
     </dialog>
 
     <div id="printArea" aria-hidden="true"></div>
-    <script src="/app.js?v=11"></script>
+    <script src="/app.js?v=LIVE_DATA_SAFETY_2026_07_01"></script>
   </body>
 </html>

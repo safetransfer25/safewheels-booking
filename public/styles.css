@@ -378,6 +378,44 @@ textarea { resize: vertical; }
   font-weight: 700;
   padding: 6px 0;
 }
+.admin-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+.build-marker {
+  margin: 6px 0 0;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 850;
+}
+.admin-tools-status {
+  margin: 0 14px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.admin-tools-status.error {
+  color: #b91c1c;
+}
+.admin-backup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 14px 14px;
+}
+.admin-backup-list li {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+.admin-backup-list li:first-child {
+  border-top: 0;
+}
+.admin-backup-list small {
+  color: var(--muted);
+  font-size: 12px;
+}
 .route-chip, .flight-chip {
   display: inline-flex;
   align-items: center;
