@@ -665,6 +665,129 @@ def month_bounds(month):
     return start.isoformat(), (next_month - timedelta(days=1)).isoformat()
 
 
+def parse_report_period(query):
+    now = datetime.now(APP_TZ)
+    try:
+        year = int(query.get("year", [str(now.year)])[0])
+    except (TypeError, ValueError):
+        year = now.year
+    try:
+        month = int(query.get("month", [str(now.month)])[0])
+    except (TypeError, ValueError):
+        month = now.month
+    month = max(1, min(12, month))
+    month_key = f"{year:04d}-{month:02d}"
+    start, end = month_bounds(month_key)
+    return year, month, month_key, start, end
+
+
+def fetch_monthly_report(year, month):
+    _, _, month_key, start, end = parse_report_period({"year": [str(year)], "month": [str(month)]})
+    with db() as conn:
+        summary = conn.execute(
+            """
+            SELECT
+              COUNT(*) AS totalTransfers,
+              COALESCE(SUM(price), 0) AS totalRevenue,
+              COALESCE(SUM(CASE WHEN paymentMethod = 'Μετρητά' THEN price ELSE 0 END), 0) AS cashRevenue,
+              COALESCE(SUM(CASE WHEN paymentMethod = 'Κάρτα' THEN price ELSE 0 END), 0) AS cardRevenue,
+              COALESCE(SUM(CASE WHEN paymentMethod = 'Πίστωση' THEN price ELSE 0 END), 0) AS creditRevenue,
+              COALESCE(SUM(CASE WHEN paymentMethod NOT IN ('Μετρητά', 'Κάρτα', 'Πίστωση') THEN price ELSE 0 END), 0) AS bankTransferRevenue,
+              COALESCE(SUM(CASE WHEN UPPER(COALESCE(bookingSource, 'PRIVATE')) = 'PRIVATE' THEN price ELSE 0 END), 0) AS privateRevenue,
+              COALESCE(SUM(CASE WHEN UPPER(COALESCE(bookingSource, 'PRIVATE')) = 'WELCOME' THEN price ELSE 0 END), 0) AS welcomeRevenue,
+              COALESCE(SUM(CASE WHEN UPPER(COALESCE(bookingSource, 'PRIVATE')) IN ('GETTRANSFER', 'CONNECTO') THEN price ELSE 0 END), 0) AS gettransferRevenue
+            FROM bookings
+            WHERE date BETWEEN ? AND ?
+              AND status != 'Cancelled'
+            """,
+            (start, end),
+        ).fetchone()
+        expenses = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE date BETWEEN ? AND ?",
+            (start, end),
+        ).fetchone()["total"]
+        by_source = [
+            row_to_dict(row)
+            for row in conn.execute(
+                """
+                SELECT
+                  UPPER(COALESCE(bookingSource, 'PRIVATE')) AS source,
+                  COUNT(*) AS transfers,
+                  COALESCE(SUM(price), 0) AS revenue
+                FROM bookings
+                WHERE date BETWEEN ? AND ?
+                  AND status != 'Cancelled'
+                GROUP BY UPPER(COALESCE(bookingSource, 'PRIVATE'))
+                ORDER BY revenue DESC, source ASC
+                """,
+                (start, end),
+            ).fetchall()
+        ]
+    data = row_to_dict(summary)
+    total_revenue = float(data["totalRevenue"] or 0)
+    expense_total = float(expenses or 0)
+    card_total = float(data["cardRevenue"] or 0) + float(data["creditRevenue"] or 0)
+    return {
+        "year": year,
+        "month": month,
+        "monthKey": month_key,
+        "periodStart": start,
+        "periodEnd": end,
+        "totalTransfers": int(data["totalTransfers"] or 0),
+        "totalRevenue": total_revenue,
+        "cashRevenue": float(data["cashRevenue"] or 0),
+        "cardRevenue": card_total,
+        "cardOnlyRevenue": float(data["cardRevenue"] or 0),
+        "creditRevenue": float(data["creditRevenue"] or 0),
+        "bankTransferRevenue": float(data["bankTransferRevenue"] or 0),
+        "privateRevenue": float(data["privateRevenue"] or 0),
+        "welcomeRevenue": float(data["welcomeRevenue"] or 0),
+        "gettransferRevenue": float(data["gettransferRevenue"] or 0),
+        "expenses": expense_total,
+        "profit": total_revenue - expense_total,
+        "rowsUsedCount": int(data["totalTransfers"] or 0),
+        "bySource": by_source,
+    }
+
+
+def build_monthly_report_xlsx(report):
+    if not OPENPYXL_AVAILABLE:
+        raise RuntimeError("openpyxl is not installed.")
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "Summary"
+    summary.append(["Monthly Report", f"{report['monthKey']}"])
+    summary.append([])
+    rows = [
+        ("Total Transfers", report["totalTransfers"]),
+        ("Total Revenue", report["totalRevenue"]),
+        ("Cash", report["cashRevenue"]),
+        ("Card", report["cardRevenue"]),
+        ("PRIVATE Revenue", report["privateRevenue"]),
+        ("WELCOME Revenue", report["welcomeRevenue"]),
+        ("GETTRANSFER Revenue", report["gettransferRevenue"]),
+        ("Expenses", report["expenses"]),
+        ("Profit", report["profit"]),
+        ("Rows Used", report["rowsUsedCount"]),
+    ]
+    if report["bankTransferRevenue"]:
+        rows.insert(5, ("Bank Transfer / Other", report["bankTransferRevenue"]))
+    for label, value in rows:
+        summary.append([label, value])
+    summary.freeze_panes = "A3"
+    summary["A1"].font = Font(bold=True)
+    sources = workbook.create_sheet("By Source")
+    sources.append(["Source", "Transfers", "Revenue"])
+    for cell in sources[1]:
+        cell.font = Font(bold=True)
+    for row in report["bySource"]:
+        sources.append([row["source"], row["transfers"], row["revenue"]])
+    sources.freeze_panes = "A2"
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 def normalize_booking(data):
     price = normalize_number(data.get("price"), 0)
     vehicle = str(data.get("vehicle") or "OPEL VIVARO")
@@ -775,6 +898,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.expense_summary(parsed)
         if parsed.path == "/api/monthly-revenue":
             return self.monthly_revenue(parsed)
+        if parsed.path == "/api/reports/monthly":
+            return self.reports_monthly(parsed)
+        if parsed.path == "/api/reports/monthly/export-xlsx":
+            return self.reports_monthly_export_xlsx(parsed)
         if parsed.path == "/api/options":
             return self.options()
         if parsed.path == "/api/admin/debug":
@@ -993,6 +1120,30 @@ class Handler(SimpleHTTPRequestHandler):
             "net": revenue - expenses,
             "byCategory": [row_to_dict(row) for row in by_category],
         })
+
+    def reports_monthly(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        year, month, _, _, _ = parse_report_period(parse_qs(parsed.query))
+        return self.send_json(fetch_monthly_report(year, month))
+
+    def reports_monthly_export_xlsx(self, parsed):
+        if not self.authorized():
+            return self.send_json({"error": "Unauthorized"}, 401)
+        if not OPENPYXL_AVAILABLE:
+            return self.send_json({"error": "openpyxl is not installed on the server."}, 500)
+        try:
+            year, month, month_key, _, _ = parse_report_period(parse_qs(parsed.query))
+            report = fetch_monthly_report(year, month)
+            body = build_monthly_report_xlsx(report)
+            filename = f"safewheels_report_{month_key}.xlsx"
+            return self.send_file(
+                body,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename,
+            )
+        except Exception as exc:
+            return self.send_json({"error": f"Report export failed: {exc}"}, 500)
 
     def monthly_revenue(self, parsed):
         if not self.authorized():

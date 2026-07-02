@@ -8,6 +8,7 @@ const state = {
   bookings: [],
   previousBookings: [],
   monthlyRevenue: null,
+  monthlyReport: null,
   adminDebug: null,
   expenses: [],
   options: {
@@ -22,7 +23,7 @@ const state = {
   editingExpenseId: null
 };
 
-const BUILD_VERSION = "LIVE_DATA_SAFETY_2026_07_01";
+const BUILD_VERSION = "REPORTS_2026_07_02";
 
 const $ = (selector) => document.querySelector(selector);
 const loginScreen = $("#loginScreen");
@@ -34,6 +35,7 @@ const expenseForm = $("#expenseForm");
 const selectedDate = $("#selectedDate");
 const expenseMonth = $("#expenseMonth");
 const revenueYear = $("#revenueYear");
+const reportMonth = $("#reportMonth");
 const previousSearchInput = $("#previousSearchInput");
 
 const statusLabels = {
@@ -56,6 +58,7 @@ init();
 function init() {
   selectedDate.value = state.date;
   expenseMonth.value = state.date.slice(0, 7);
+  reportMonth.value = state.date.slice(0, 7);
   revenueYear.value = new Date(`${state.date}T12:00:00`).getFullYear();
   bindEvents();
   if (state.token) showApp();
@@ -68,6 +71,7 @@ function bindEvents() {
   $("#expensesTab").addEventListener("click", () => switchTab("expenses"));
   $("#previousTab").addEventListener("click", () => switchTab("previous"));
   $("#revenueTab").addEventListener("click", () => switchTab("revenue"));
+  $("#reportsTab").addEventListener("click", () => switchTab("reports"));
   $("#fleetTab").addEventListener("click", () => switchTab("fleet"));
   $("#prevDay").addEventListener("click", () => changeDay(-1));
   $("#nextDay").addEventListener("click", () => changeDay(1));
@@ -91,6 +95,10 @@ function bindEvents() {
   $("#printBtn").addEventListener("click", () => window.print());
   $("#refreshPreviousBtn").addEventListener("click", loadPreviousBookings);
   $("#refreshRevenueBtn").addEventListener("click", loadMonthlyRevenue);
+  $("#refreshReportBtn").addEventListener("click", loadMonthlyReport);
+  $("#printReportBtn").addEventListener("click", printMonthlyReport);
+  $("#exportReportExcelBtn").addEventListener("click", exportMonthlyReportExcel);
+  reportMonth.addEventListener("change", loadMonthlyReport);
   $("#refreshAdminDebugBtn").addEventListener("click", loadAdminDebug);
   $("#adminDebugSearchInput").addEventListener("input", debounce(loadAdminDebug, 220));
   $("#createLiveBackupBtn").addEventListener("click", createLiveBackup);
@@ -164,15 +172,18 @@ function switchTab(tab) {
   $("#expensesView").hidden = tab !== "expenses";
   $("#previousView").hidden = tab !== "previous";
   $("#revenueView").hidden = tab !== "revenue";
+  $("#reportsView").hidden = tab !== "reports";
   $("#fleetView").hidden = tab !== "fleet";
   $("#bookingsTab").classList.toggle("active", tab === "bookings");
   $("#expensesTab").classList.toggle("active", tab === "expenses");
   $("#previousTab").classList.toggle("active", tab === "previous");
   $("#revenueTab").classList.toggle("active", tab === "revenue");
+  $("#reportsTab").classList.toggle("active", tab === "reports");
   $("#fleetTab").classList.toggle("active", tab === "fleet");
   if (tab === "expenses") loadExpenses();
   if (tab === "previous") loadPreviousBookings();
   if (tab === "revenue") loadMonthlyRevenue();
+  if (tab === "reports") loadMonthlyReport();
   if (tab === "fleet") {
     renderOptionsManager();
     loadAdminDebug();
@@ -1024,6 +1035,141 @@ function renderMonthlyRevenue() {
   $("#revenueMonthList").querySelectorAll(".pdf-month-btn").forEach((button) => {
     button.addEventListener("click", () => printRevenueMonth(Number(button.dataset.index), "pdf"));
   });
+}
+
+async function loadMonthlyReport() {
+  if (!state.token) return;
+  const monthKey = reportMonth.value || state.date.slice(0, 7);
+  const [year, month] = monthKey.split("-");
+  const data = await api(`/api/reports/monthly?year=${year}&month=${month}`);
+  state.monthlyReport = data;
+  renderMonthlyReport();
+}
+
+function renderMonthlyReport() {
+  const data = state.monthlyReport;
+  if (!data) return;
+  $("#reportTransfers").textContent = String(data.totalTransfers || 0);
+  $("#reportRevenue").textContent = money(data.totalRevenue);
+  $("#reportCash").textContent = money(data.cashRevenue);
+  $("#reportCard").textContent = money(data.cardRevenue);
+  $("#reportPrivate").textContent = money(data.privateRevenue);
+  $("#reportWelcome").textContent = money(data.welcomeRevenue);
+  $("#reportGettransfer").textContent = money(data.gettransferRevenue);
+  $("#reportExpenses").textContent = money(data.expenses);
+  $("#reportProfit").textContent = money(data.profit);
+  $("#reportProfit").classList.toggle("negative", Number(data.profit) < 0);
+  const monthLabel = reportMonthLabel(data.monthKey);
+  let meta = `${monthLabel} · ${data.rowsUsedCount || 0} γραμμές (χωρίς ακυρωμένες)`;
+  if (Number(data.bankTransferRevenue) > 0) {
+    meta += ` · Τραπεζική/Άλλο: ${money(data.bankTransferRevenue)}`;
+  }
+  $("#reportMeta").textContent = meta;
+
+  const rows = data.bySource || [];
+  $("#reportSourceBody").innerHTML = rows.length
+    ? rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(formatReportSource(row.source))}</td>
+        <td>${row.transfers || 0}</td>
+        <td>${money(row.revenue)}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="3" class="empty-cell">Δεν υπάρχουν καταχωρήσεις για τον μήνα.</td></tr>`;
+}
+
+function reportMonthLabel(monthKey) {
+  const [year, month] = String(monthKey || "").split("-");
+  const date = new Date(`${year}-${month}-01T12:00:00`);
+  return date.toLocaleDateString("el-GR", { month: "long", year: "numeric" });
+}
+
+function formatReportSource(source) {
+  const key = String(source || "PRIVATE").toUpperCase();
+  if (key === "CONNECTO") return "GETTRANSFER";
+  return key;
+}
+
+function printMonthlyReport() {
+  const data = state.monthlyReport;
+  if (!data) return;
+  const printArea = $("#printArea");
+  const monthLabel = reportMonthLabel(data.monthKey);
+  printArea.innerHTML = buildReportPrintHtml(data, monthLabel);
+  document.title = `TRANSFER - Αναφορά - ${monthLabel}`;
+  document.body.classList.add("printing-report");
+  document.body.classList.remove("print-landscape");
+  setPrintPageMode("portrait");
+  requestAnimationFrame(() => {
+    window.print();
+    window.setTimeout(() => {
+      document.body.classList.remove("printing-report", "print-landscape");
+      printArea.innerHTML = "";
+      document.title = "SafeWheels Kos | Κρατήσεις Transfer";
+      setPrintPageMode("portrait");
+    }, 500);
+  });
+}
+
+function buildReportPrintHtml(data, monthLabel) {
+  const rows = data.bySource || [];
+  return `
+    <section class="print-sheet">
+      <header class="print-header">
+        <p>TRANSFER</p>
+        <h1>Μηνιαία Αναφορά</h1>
+        <h2>${escapeHtml(monthLabel)}</h2>
+      </header>
+      <section class="print-report-cards">
+        <div><span>Σύνολο μεταφορών</span><strong>${data.totalTransfers || 0}</strong></div>
+        <div><span>Σύνολο εισπράξεων</span><strong>${money(data.totalRevenue)}</strong></div>
+        <div><span>Μετρητά</span><strong class="amount-cash">${money(data.cashRevenue)}</strong></div>
+        <div><span>Κάρτα</span><strong class="amount-card">${money(data.cardRevenue)}</strong></div>
+        <div><span>PRIVATE</span><strong>${money(data.privateRevenue)}</strong></div>
+        <div><span>WELCOME</span><strong>${money(data.welcomeRevenue)}</strong></div>
+        <div><span>GETTRANSFER</span><strong>${money(data.gettransferRevenue)}</strong></div>
+        <div><span>Έξοδα</span><strong class="amount-expense">${money(data.expenses)}</strong></div>
+        <div><span>Κέρδος</span><strong class="amount-net ${Number(data.profit) < 0 ? "negative" : ""}">${money(data.profit)}</strong></div>
+      </section>
+      <table class="revenue-table print-revenue-table report-table">
+        <thead>
+          <tr>
+            <th>Πηγή</th>
+            <th>Μεταφορές</th>
+            <th>Έσοδα</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(formatReportSource(row.source))}</td>
+              <td>${row.transfers || 0}</td>
+              <td>${money(row.revenue)}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="3" class="empty-cell">Δεν υπάρχουν καταχωρήσεις για τον μήνα.</td></tr>`}
+        </tbody>
+      </table>
+      <footer class="print-totals print-report-footer">
+        <div><span>Γραμμές</span><strong>${data.rowsUsedCount || 0}</strong></div>
+        ${Number(data.bankTransferRevenue) > 0 ? `<div><span>Τραπεζική / Άλλο</span><strong>${money(data.bankTransferRevenue)}</strong></div>` : ""}
+      </footer>
+    </section>
+  `;
+}
+
+async function exportMonthlyReportExcel() {
+  if (!state.token) return;
+  const monthKey = reportMonth.value || state.date.slice(0, 7);
+  const [year, month] = monthKey.split("-");
+  try {
+    const { blob, filename } = await fetchAdminFile(
+      `/api/reports/monthly/export-xlsx?year=${year}&month=${month}`,
+      `safewheels_report_${monthKey}.xlsx`
+    );
+    downloadBlob(blob, filename);
+  } catch (error) {
+    alert(error.message || "Η εξαγωγή απέτυχε.");
+  }
 }
 
 function printRevenueMonth(index, mode) {
